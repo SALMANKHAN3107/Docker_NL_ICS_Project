@@ -110,6 +110,19 @@ export class AgentController {
 
       const containers = await DockerExecutor.getStatus();
 
+      // Identify if any specific containers are mentioned/matched in the query
+      const matchedContainerNames = new Set<string>();
+      if (parsedIntent.containerName && parsedIntent.containerName !== 'none') {
+        matchedContainerNames.add(parsedIntent.containerName.toLowerCase());
+      }
+      containers.forEach(c => {
+        const regex = new RegExp(`\\b${c.name.toLowerCase()}\\b`, 'i');
+        if (regex.test(query) || query.toLowerCase().includes(c.name.toLowerCase())) {
+          matchedContainerNames.add(c.name.toLowerCase());
+        }
+      });
+      const matchedContainers = containers.filter(c => matchedContainerNames.has(c.name.toLowerCase()));
+
       // Dispatch based on parsed intent type
       if (parsedIntent.intent === 'action') {
         let containerName = parsedIntent.containerName;
@@ -178,6 +191,13 @@ export class AgentController {
           }
         }
 
+        // Apply container name filter if matched
+        if (matchedContainers.length > 0) {
+          filteredContainers = filteredContainers.filter(c =>
+            matchedContainers.some(mc => mc.name.toLowerCase() === c.name.toLowerCase())
+          );
+        }
+
         // Generate retrieval summary
         const summary = await LLMService.generateRetrievalSummary(filteredContainers);
 
@@ -193,7 +213,8 @@ export class AgentController {
             }
           ],
           commentary: summary,
-          containersAtEnd: filteredContainers
+          containersAtEnd: filteredContainers,
+          matchedContainerNames: matchedContainers.map(c => c.name)
         };
       }
 
@@ -243,8 +264,15 @@ export class AgentController {
       }
 
       if (parsedIntent.intent === 'reasoning') {
+        let filteredContainers = containers;
+        if (matchedContainers.length > 0) {
+          filteredContainers = containers.filter(c =>
+            matchedContainers.some(mc => mc.name.toLowerCase() === c.name.toLowerCase())
+          );
+        }
+
         // Generate reasoning summary
-        const summary = await LLMService.generateReasoningSummary(query, containers);
+        const summary = await LLMService.generateReasoningSummary(query, filteredContainers);
 
         return {
           query,
@@ -254,22 +282,30 @@ export class AgentController {
               loopNumber: 1,
               action: "stats",
               thoughts: "Inspecting host resource configurations.",
-              observation: { containerCount: containers.length }
+              observation: { containerCount: filteredContainers.length }
             }
           ],
           commentary: summary,
-          containersAtEnd: containers
+          containersAtEnd: filteredContainers,
+          matchedContainerNames: matchedContainers.map(c => c.name)
         };
       }
 
       // Default to general reasoning status
-      const defaultSummary = await LLMService.generateReasoningSummary(query, containers);
+      let finalContainers = containers;
+      if (matchedContainers.length > 0) {
+        finalContainers = containers.filter(c =>
+          matchedContainers.some(mc => mc.name.toLowerCase() === c.name.toLowerCase())
+        );
+      }
+      const defaultSummary = await LLMService.generateReasoningSummary(query, finalContainers);
       return {
         query,
         initialIntent: parsedIntent,
         steps: [],
         commentary: defaultSummary,
-        containersAtEnd: containers
+        containersAtEnd: finalContainers,
+        matchedContainerNames: matchedContainers.map(c => c.name)
       };
 
     } catch (err: any) {
