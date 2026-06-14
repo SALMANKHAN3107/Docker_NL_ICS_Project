@@ -25,7 +25,15 @@ const getFilename = () => {
   return typeof __filename !== "undefined" ? __filename : "";
 };
 const __filename = getFilename();
-const __dirname = typeof __dirname !== "undefined" ? __dirname : path.dirname(__filename);
+const getDirname = () => {
+  try {
+    if (typeof __dirname !== "undefined") {
+      return __dirname;
+    }
+  } catch (e) {}
+  return path.dirname(getFilename());
+};
+const __dirname = getDirname();
 
 async function startServer() {
   const app = express();
