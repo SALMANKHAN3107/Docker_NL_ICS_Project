@@ -6,8 +6,8 @@ export interface ContainerState {
   id: string;
   name: string;
   image: string;
-  status: 'running' | 'restarting' | 'exited' | 'paused';
-  health: 'healthy' | 'unhealthy' | 'none';
+  status: string;
+  health: 'healthy' | 'unhealthy' | 'exited' | 'restarting' | 'paused' | 'created' | 'dead' | 'unknown' | 'none';
   cpu: number; // percentage
   memory: number; // MB
   memoryLimit: number; // MB
@@ -100,12 +100,12 @@ export class DockerExecutor {
         if (fs.existsSync('\\\\.\\pipe\\dockerDesktopLinuxEngine')) {
           return "npipe:////./pipe/dockerDesktopLinuxEngine";
         }
-      } catch (e) {}
+      } catch (e) { }
       try {
         if (fs.existsSync('\\\\.\\pipe\\docker_engine')) {
           return "npipe:////./pipe/docker_engine";
         }
-      } catch (e) {}
+      } catch (e) { }
     }
     return "Local Docker Desktop socket/named pipe";
   }
@@ -121,12 +121,12 @@ export class DockerExecutor {
         if (fs.existsSync('\\\\.\\pipe\\dockerDesktopLinuxEngine')) {
           return new Docker({ socketPath: '//./pipe/dockerDesktopLinuxEngine' });
         }
-      } catch (e) {}
+      } catch (e) { }
       try {
         if (fs.existsSync('\\\\.\\pipe\\docker_engine')) {
           return new Docker({ socketPath: '//./pipe/docker_engine' });
         }
-      } catch (e) {}
+      } catch (e) { }
     }
     return new Docker();
   }
@@ -135,7 +135,7 @@ export class DockerExecutor {
   static getDetailedError(err: any): string {
     if (!err) return "Not connected to local Docker.";
     const msg = (err.message || String(err)).toLowerCase();
-    
+
     if (msg.includes("econnrefused") || msg.includes("enoent") || msg.includes("connect enoent") || msg.includes("connection refused") || msg.includes("could not connect")) {
       return "Docker Desktop not running";
     }
@@ -148,7 +148,7 @@ export class DockerExecutor {
     if (this.dockerMode === ('simulation' as any)) {
       return "Sandbox active";
     }
-    
+
     return `Not connected to local Docker. Details: ${err.message || err}`;
   }
 
@@ -156,19 +156,19 @@ export class DockerExecutor {
     try {
       const docker = this.getDockerInstance();
       const rawContainers = await docker.listContainers({ all: true });
-      
+
       const mapped: ContainerState[] = await Promise.all(
         rawContainers.map(async (item) => {
           const id = item.Id.substring(0, 12);
           const name = (item.Names && item.Names.length > 0) ? item.Names[0].replace(/^\//, '') : id;
           const image = item.Image;
-          const status = item.State; // e.g. "running", "exited", etc.
+          let dockerState = item.State; // e.g. "running", "exited", etc.
           const createdAt = new Date(item.Created * 1000).toISOString();
-          
+
           let restartCount = 0;
-          let health: 'healthy' | 'unhealthy' | 'none' = 'none';
+          let health: 'healthy' | 'unhealthy' | 'exited' | 'restarting' | 'paused' | 'created' | 'dead' | 'unknown' | 'none' = 'unknown';
           let ports: string[] = [];
-          
+
           if (item.Ports) {
             ports = item.Ports.map((p: any) => p.PublicPort ? `${p.PublicPort}:${p.PrivatePort}` : `${p.PrivatePort}`).filter(Boolean);
           }
@@ -177,34 +177,73 @@ export class DockerExecutor {
           try {
             const containerObj = docker.getContainer(item.Id);
             const inspect = await containerObj.inspect();
+            dockerState = inspect.State?.Status || item.State;
             restartCount = inspect.RestartCount || 0;
-            const rawHealth = inspect.State?.Health?.Status;
-            if (rawHealth === 'healthy') {
-              health = 'healthy';
-            } else if (rawHealth === 'unhealthy') {
-              health = 'unhealthy';
+            
+            const hasHealthCheck = inspect.State?.Health !== undefined;
+            const rawHealth = inspect.State?.Health?.Status; // e.g. "healthy", "unhealthy", "starting"
+            
+            if (dockerState === 'running') {
+              if (hasHealthCheck) {
+                if (rawHealth === 'unhealthy') {
+                  health = 'unhealthy';
+                } else if (rawHealth === 'healthy') {
+                  health = 'healthy';
+                } else {
+                  health = 'unknown'; // starting / other
+                }
+              } else {
+                health = 'healthy'; // running with no health check configured -> Healthy
+              }
+            } else if (dockerState === 'exited') {
+              health = 'exited';
+            } else if (dockerState === 'restarting') {
+              health = 'restarting';
+            } else if (dockerState === 'paused') {
+              health = 'paused';
+            } else if (dockerState === 'created') {
+              health = 'created';
+            } else if (dockerState === 'dead') {
+              health = 'dead';
+            } else {
+              health = 'unknown';
             }
           } catch (e) {
-            // ignore inspect failures
+            // fallback if inspect fails
+            if (dockerState === 'running') {
+              health = 'healthy';
+            } else if (dockerState === 'exited') {
+              health = 'exited';
+            } else if (dockerState === 'restarting') {
+              health = 'restarting';
+            } else if (dockerState === 'paused') {
+              health = 'paused';
+            } else if (dockerState === 'created') {
+              health = 'created';
+            } else if (dockerState === 'dead') {
+              health = 'dead';
+            } else {
+              health = 'unknown';
+            }
           }
 
           // Fetch metrics
           let cpu = 0;
           let memory = 0;
           let memoryLimit = 512;
-          
-          if (status === 'running') {
+
+          if (dockerState === 'running') {
             try {
               const containerObj = docker.getContainer(item.Id);
               const stats = await containerObj.stats({ stream: false }) as any;
-              
+
               if (stats.memory_stats) {
                 const usage = stats.memory_stats.usage || 0;
                 const limit = stats.memory_stats.limit || (1024 * 1024 * 1024);
                 memory = Number((usage / (1024 * 1024)).toFixed(1));
                 memoryLimit = Number((limit / (1024 * 1024)).toFixed(0));
               }
-              
+
               if (stats.cpu_stats && stats.precpu_stats) {
                 const cpuDelta = (stats.cpu_stats.cpu_usage?.total_usage || 0) - (stats.precpu_stats.cpu_usage?.total_usage || 0);
                 const systemDelta = (stats.cpu_stats.system_cpu_usage || 0) - (stats.precpu_stats.system_cpu_usage || 0);
@@ -222,14 +261,14 @@ export class DockerExecutor {
             id,
             name,
             image,
-            status: (['running', 'restarting', 'exited', 'paused'].includes(status) ? status : 'exited') as any,
+            status: dockerState,
             health,
             cpu,
             memory,
             memoryLimit: memoryLimit > 0 ? memoryLimit : 512,
             restartCount,
             uptime: item.Status || 'Status Unavailable',
-            uptimeSeconds: status === 'running' ? 3600 : 0,
+            uptimeSeconds: dockerState === 'running' ? 3600 : 0,
             ports,
             createdAt,
             ageDescription: `Created ${item.Status || 'some time ago'}`,
@@ -252,8 +291,8 @@ export class DockerExecutor {
         status: c.status,
         health: c.health,
         restartCount: c.restartCount,
-        issue: c.health === 'unhealthy' 
-          ? (c.status === 'restarting' ? "Restarting cycle detected" : "Resource bottleneck / load latency") 
+        issue: c.health === 'unhealthy'
+          ? (c.status === 'restarting' ? "Restarting cycle detected" : "Resource bottleneck / load latency")
           : "None",
         createdAt: c.createdAt,
         ageDescription: c.ageDescription
@@ -315,7 +354,7 @@ export class DockerExecutor {
         const nameParts = nameAndRegistry.split('/');
         const name = nameParts.pop() || 'unnamed';
         const registry = nameParts.join('/') || 'library';
-        
+
         return {
           registry: registry,
           name: name,
@@ -469,7 +508,7 @@ export class DockerExecutor {
         return { success: true, action: 'info', data: await this.getInfo() };
       case 'summary':
         return { success: true, action: 'summary', data: await this.getSummary() };
-      
+
       // Control operators
       case 'start':
         if (!target) return { success: false, error: 'Start action requires a target container.' };

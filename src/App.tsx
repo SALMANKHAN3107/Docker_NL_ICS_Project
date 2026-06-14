@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from "react";
-import { 
-  Activity, 
-  Terminal, 
-  ShieldAlert, 
-  Cpu, 
-  RefreshCw, 
-  Search, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Clock, 
-  Sparkles, 
-  HelpCircle, 
-  AlertOctagon, 
+import {
+  Activity,
+  Terminal,
+  ShieldAlert,
+  Cpu,
+  RefreshCw,
+  Search,
+  CheckCircle2,
+  AlertTriangle,
+  Clock,
+  Sparkles,
+  HelpCircle,
+  AlertOctagon,
   ArrowRight,
   FileText,
   HeartPulse,
@@ -29,8 +29,8 @@ interface Container {
   id: string;
   name: string;
   image: string;
-  status: "running" | "restarting" | "exited" | "paused";
-  health: "healthy" | "unhealthy" | "none";
+  status: string;
+  health: "healthy" | "unhealthy" | "exited" | "restarting" | "paused" | "created" | "dead" | "unknown" | "none";
   issue: string;
   cpu: string;
   memory: string;
@@ -114,7 +114,7 @@ const parseResilientJson = (text: string): any => {
     if (match && match[1]) {
       try {
         return JSON.parse(match[1].trim());
-      } catch (inner) {}
+      } catch (inner) { }
     }
     // Find '{' and '}'
     const start = text.indexOf('{');
@@ -122,7 +122,7 @@ const parseResilientJson = (text: string): any => {
     if (start !== -1 && end !== -1 && end > start) {
       try {
         return JSON.parse(text.slice(start, end + 1));
-      } catch (inner) {}
+      } catch (inner) { }
     }
     throw e;
   }
@@ -222,17 +222,17 @@ const getDynamicInsights = (text: string, containers: any[]): DynamicInsights =>
   if (parsed) {
     return {
       detectedAnomaly: parsed.detectedAnomaly || (exitedContainers.length > 0 ? `${exitedContainers.length} container(s) are currently stopped or exited.` : "All container processes operating within optimal boundaries."),
-      status: (parsed.status === "Critical" || parsed.status === "Warning" || parsed.status === "Healthy") 
-        ? parsed.status 
+      status: (parsed.status === "Critical" || parsed.status === "Warning" || parsed.status === "Healthy")
+        ? parsed.status
         : (exitedContainers.length > 0 ? "Warning" : "Healthy"),
       rootCause: parsed.rootCause || (exitedContainers.length > 0 ? "Applications inside the containers stopped unexpectedly." : "System is operating normally."),
-      supportingObservations: Array.isArray(parsed.supportingObservations) && parsed.supportingObservations.length > 0 
-        ? parsed.supportingObservations 
+      supportingObservations: Array.isArray(parsed.supportingObservations) && parsed.supportingObservations.length > 0
+        ? parsed.supportingObservations
         : (exitedContainers.length > 0 ? ["Exit state detected", "Resource usage normal", "No active container stats"] : ["Resource usage normal", "No abnormal health checks"]),
-      possibleCauses: Array.isArray(parsed.possibleCauses) && parsed.possibleCauses.length > 0 
-        ? parsed.possibleCauses 
+      possibleCauses: Array.isArray(parsed.possibleCauses) && parsed.possibleCauses.length > 0
+        ? parsed.possibleCauses
         : (exitedContainers.length > 0 ? ["Recent updates or code changes", "Container memory exhaustion", "Unexpected application termination"] : ["No known causes identified"]),
-      humanSummary: parsed.humanSummary || (exitedContainers.length > 0 
+      humanSummary: parsed.humanSummary || (exitedContainers.length > 0
         ? "Your system is mostly working normally.\nSome applications stopped running unexpectedly.\nCheck them once and restart only if needed."
         : "Your system is operating normally.\nAll applications are running as expected.\nNo action is required at this time."),
       containerAnalysis: Array.isArray(parsed.containerAnalysis) ? parsed.containerAnalysis : containers.map(c => ({
@@ -452,14 +452,92 @@ export default function App() {
   // Live vs Simulated Docker Target Engine states
   const [dockerMode, setDockerMode] = useState<'simulation' | 'live'>('live');
   const [dockerHostUrl, setDockerHostUrl] = useState('http://127.0.0.1:2375');
-  const [dockerConnected, setDockerConnected] = useState(true);
+  const [dockerConnected, setDockerConnected] = useState(false);
   const [dockerConnecting, setDockerConnecting] = useState(false);
   const [dockerError, setDockerError] = useState<string | null>(null);
   const [showDockerPanel, setShowDockerPanel] = useState(false);
 
+  // Connection Setup States
+  const [selectedOS, setSelectedOS] = useState<'windows' | 'mac' | 'linux'>('windows');
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectorUrl, setConnectorUrl] = useState<string>("http://127.0.0.1:43210");
+  const [isConnectingConnector, setIsConnectingConnector] = useState<boolean>(false);
+
+  const apiFetch = async (path: string, options?: RequestInit) => {
+    if (!isConnected && path !== "/api/health") {
+      throw new Error("Local environment is not connected. Use the sidebar connection buttons.");
+    }
+    const baseUrl = connectorUrl;
+    const response = await fetch(`${baseUrl}${path}`, options);
+    return response;
+  };
+
+  const handleConnectDocker = async () => {
+    setIsConnectingConnector(true);
+    setConnectionError(null);
+    try {
+      const res = await fetch(`${connectorUrl}/api/health`);
+      const data = await res.json();
+      if (data.success) {
+        setIsConnected(true);
+        setDockerConnected(data.dockerConnected);
+        setOllamaConnected(data.ollamaConnected);
+        if (!data.dockerConnected) {
+          setConnectionError("Local connector active, but Docker Desktop is not running.");
+        } else {
+          // Trigger immediate state reload
+          setTimeout(() => {
+            fetchDockerState();
+            fetchOllamaStatus();
+            fetchDockerConfig();
+          }, 100);
+        }
+      }
+    } catch (err: any) {
+      setIsConnected(false);
+      setDockerConnected(false);
+      setOllamaConnected(false);
+      setConnectionError("Could not reach local connector. Ensure 'node local-connector.js' is running.");
+    } finally {
+      setIsConnectingConnector(false);
+    }
+  };
+
+  const handleConnectOllama = async () => {
+    setIsConnectingConnector(true);
+    setConnectionError(null);
+    try {
+      const res = await fetch(`${connectorUrl}/api/health`);
+      const data = await res.json();
+      if (data.success) {
+        setIsConnected(true);
+        setDockerConnected(data.dockerConnected);
+        setOllamaConnected(data.ollamaConnected);
+        if (!data.ollamaConnected) {
+          setConnectionError("Local connector active, but Ollama service is not running.");
+        } else {
+          // Trigger immediate state reload
+          setTimeout(() => {
+            fetchDockerState();
+            fetchOllamaStatus();
+            fetchDockerConfig();
+          }, 100);
+        }
+      }
+    } catch (err: any) {
+      setIsConnected(false);
+      setDockerConnected(false);
+      setOllamaConnected(false);
+      setConnectionError("Could not reach local connector. Ensure 'node local-connector.js' is running.");
+    } finally {
+      setIsConnectingConnector(false);
+    }
+  };
+
   const fetchDockerConfig = async () => {
     try {
-      const res = await fetch("/api/docker/config");
+      const res = await apiFetch("/api/docker/config");
       const data = await res.json();
       if (data.success) {
         setDockerMode(data.mode || "simulation");
@@ -474,7 +552,7 @@ export default function App() {
     setDockerConnecting(true);
     setDockerError(null);
     try {
-      const res = await fetch("/api/docker/config", {
+      const res = await apiFetch("/api/docker/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: newMode, hostUrl: newHostUrl })
@@ -487,7 +565,6 @@ export default function App() {
         if (!data.connectionOk) {
           setDockerError(data.errorMsg || "Could not reach remote Docker socket. Ensure the TCP socket is exposed and your tunnel is healthy.");
         } else {
-          // Immediately reload docker table stats
           fetchDockerState();
         }
       }
@@ -500,7 +577,7 @@ export default function App() {
 
   const fetchOllamaStatus = async () => {
     try {
-      const res = await fetch("/api/ollama/status");
+      const res = await apiFetch("/api/ollama/status");
       const data = await res.json();
       setOllamaUrl(data.url || "http://127.0.0.1:11434");
       setOllamaModel(data.model || "llama3");
@@ -520,7 +597,7 @@ export default function App() {
     setIsTestingOllama(true);
     setOllamaError(null);
     try {
-      const res = await fetch("/api/ollama/config", {
+      const res = await apiFetch("/api/ollama/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: newUrl, model: newModel, activeProvider: newProvider })
@@ -542,7 +619,7 @@ export default function App() {
   };
 
   // Active navigation tab
-  const [activeTab, setActiveTab ] = useState<"containers" | "images" | "system">("containers");
+  const [activeTab, setActiveTab] = useState<"containers" | "images" | "system">("containers");
 
   // --- DIRECT CONTROL HUD & TERMINAL STATE ---
   const [actionInProgress, setActionInProgress] = useState<{ [containerName: string]: 'start' | 'stop' | 'restart' | null }>({});
@@ -555,10 +632,11 @@ export default function App() {
 
   // Trigger real-time start/stop/restart operations
   const handleContainerControl = async (containerName: string, action: 'start' | 'stop' | 'restart') => {
+    if (!isConnected) return;
     setActionInProgress(prev => ({ ...prev, [containerName]: action }));
     setControlError(null);
     try {
-      const response = await fetch("/api/docker/control", {
+      const response = await apiFetch("/api/docker/control", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, containerName })
@@ -582,9 +660,10 @@ export default function App() {
 
   // Fetch real logs dynamically (direct log viewer bypasses LLM lag)
   const fetchTerminalLogs = async (containerName: string) => {
+    if (!isConnected) return;
     setIsTerminalLoading(true);
     try {
-      const res = await fetch(`/api/docker/logs/${containerName}`);
+      const res = await apiFetch(`/api/docker/logs/${containerName}`);
       const data = await res.json();
       if (data.success) {
         setTerminalLogs(data.logs || []);
@@ -605,8 +684,9 @@ export default function App() {
 
   // Load current Docker state from backend with error handling
   const fetchDockerState = async () => {
+    if (!isConnected) return;
     try {
-      const res = await fetch("/api/docker/state");
+      const res = await apiFetch("/api/docker/state");
       const data = await res.json();
       if (data.success) {
         const updated = data.containers || [];
@@ -637,6 +717,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!isConnected) return;
     fetchDockerState();
     fetchOllamaStatus();
     fetchDockerConfig();
@@ -645,12 +726,13 @@ export default function App() {
       fetchOllamaStatus();
     }, 8000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isConnected]);
 
   // Soft refresh metric pulse without simulated terms
   const triggerMetricsRefresh = async () => {
+    if (!isConnected) return;
     try {
-      await fetch("/api/docker/tick", { method: "POST" });
+      await apiFetch("/api/docker/tick", { method: "POST" });
       await fetchDockerState();
     } catch (err) {
       console.error("Failed to fetch updated metrics:", err);
@@ -659,7 +741,7 @@ export default function App() {
 
   // Run Ollama translation/diagnostic query
   const executeDiagnosticQuery = async (queryText: string) => {
-    if (!queryText.trim()) return;
+    if (!isConnected || !queryText.trim()) return;
     setIsAgentRunning(true);
     setAgentError(null);
     setAgentResult(null);
@@ -686,11 +768,8 @@ export default function App() {
     setQueryResponseMode(mode);
 
     const columns = ["Container"];
-    if (lowerQuery.includes("status") || lowerQuery.includes("running") || lowerQuery.includes("stopped") || lowerQuery.includes("exited") || (!lowerQuery.includes("cpu") && !lowerQuery.includes("memory") && !lowerQuery.includes("health") && !lowerQuery.includes("image"))) {
+    if (lowerQuery.includes("status") || lowerQuery.includes("running") || lowerQuery.includes("stopped") || lowerQuery.includes("exited") || (!lowerQuery.includes("cpu") && !lowerQuery.includes("memory") && !lowerQuery.includes("image"))) {
       columns.push("Status");
-    }
-    if (lowerQuery.includes("health") || lowerQuery.includes("unhealthy") || lowerQuery.includes("stable") || (!lowerQuery.includes("cpu") && !lowerQuery.includes("memory") && !lowerQuery.includes("image"))) {
-      columns.push("Health");
     }
     if (lowerQuery.includes("cpu") || lowerQuery.includes("metric") || lowerQuery.includes("resource") || lowerQuery.includes("usage") || lowerQuery.includes("performance")) {
       columns.push("CPU");
@@ -701,7 +780,7 @@ export default function App() {
     if (lowerQuery.includes("image") || lowerQuery.includes("version")) {
       columns.push("Image");
     }
-    if (lowerQuery.includes("uptime") || lowerQuery.includes("age") || lowerQuery.includes("run for") || (!lowerQuery.includes("cpu") && !lowerQuery.includes("memory") && !lowerQuery.includes("health") && !lowerQuery.includes("image"))) {
+    if (lowerQuery.includes("uptime") || lowerQuery.includes("age") || lowerQuery.includes("run for") || (!lowerQuery.includes("cpu") && !lowerQuery.includes("memory") && !lowerQuery.includes("image"))) {
       columns.push("Uptime");
     }
     setQueryResponseColumns(columns);
@@ -769,7 +848,7 @@ Rules:
     }
 
     try {
-      const response = await fetch("/api/docker/query", {
+      const response = await apiFetch("/api/docker/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: queryText })
@@ -799,8 +878,8 @@ Rules:
   // Helper filters
   const filteredContainers = containers.filter(c => {
     const statusMatch = statusFilter === "All" || c.status.toLowerCase() === statusFilter.toLowerCase();
-    const searchMatch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                        c.image.toLowerCase().includes(searchTerm.toLowerCase());
+    const searchMatch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.image.toLowerCase().includes(searchTerm.toLowerCase());
     return statusMatch && searchMatch;
   });
 
@@ -813,13 +892,13 @@ Rules:
   // Custom markdown highlight parser for Ollama outputs support
   const formatMarkdown = (text: string) => {
     if (!text) return "";
-    
+
     const lines = text.split("\n");
     let inTable = false;
     let tableHeaders: string[] = [];
     let tableRows: string[][] = [];
     let htmlOutput: string[] = [];
-    
+
     const flushTable = () => {
       if (tableHeaders.length > 0) {
         let tableHtml = '<div class="overflow-x-auto rounded-lg border border-slate-200 my-3"><table class="w-full text-left text-xs border-collapse bg-white font-sans">';
@@ -848,7 +927,7 @@ Rules:
             } else if (processedCell.match(/^\d+%/)) {
               processedCell = `<strong class="text-slate-800 font-mono font-bold">${processedCell}</strong>`;
             }
-            
+
             tableHtml += `<td class="p-2.5 font-sans">${processedCell}</td>`;
           });
           tableHtml += '</tr>';
@@ -863,7 +942,7 @@ Rules:
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
-      
+
       // Match markdown tables
       if (line.startsWith("|")) {
         inTable = true;
@@ -912,17 +991,17 @@ Rules:
         htmlOutput.push(`<p class="text-slate-600 text-xs leading-relaxed my-1 font-sans">${content}</p>`);
       }
     }
-    
+
     if (inTable) {
       flushTable();
     }
-    
+
     return htmlOutput.join("\n");
   };
 
   return (
     <div className="min-h-screen bg-[#f8f9fb] text-[#262730] font-sans antialiased flex flex-col">
-      
+
       {/* Clean Premium Banner (Strictly Professional, No tech-larping or Ollama badges) */}
       <header className="bg-white border-b border-[#e6e9ef] px-6 py-4 flex items-center justify-between shadow-xs sticky top-0 z-40">
         <div className="flex items-center gap-3">
@@ -933,21 +1012,19 @@ Rules:
         </div>
         <div className="flex items-center gap-3">
           {/* Docker Status Indicator */}
-          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-bold ${
-            dockerConnected 
-              ? "text-emerald-700 bg-emerald-50 border-emerald-100" 
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-bold ${dockerConnected
+              ? "text-emerald-700 bg-emerald-50 border-emerald-100"
               : "text-red-700 bg-red-50 border-red-100 animate-pulse"
-          }`}>
+            }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${dockerConnected ? "bg-emerald-500" : "bg-red-500"}`} />
             <span>Docker: {dockerConnected ? "Connected" : "Disconnected"}</span>
           </div>
 
           {/* Ollama Status Indicator */}
-          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-bold ${
-            ollamaConnected 
-              ? "text-emerald-700 bg-emerald-50 border-emerald-100" 
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-bold ${ollamaConnected
+              ? "text-emerald-700 bg-emerald-50 border-emerald-100"
               : "text-red-700 bg-red-50 border-red-100 animate-pulse"
-          }`}>
+            }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${ollamaConnected ? "bg-emerald-500" : "bg-red-500"}`} />
             <span>Ollama: {ollamaConnected ? "Connected" : "Disconnected"}</span>
           </div>
@@ -960,10 +1037,109 @@ Rules:
 
       {/* Main Split Layout */}
       <div className="flex-1 flex flex-col md:flex-row">
-        
+
         {/* Simplified side control panel */}
         <aside className="w-full md:w-76 bg-[#f0f2f6] border-r border-[#e6e9ef] p-5 flex flex-col gap-5 select-none shrink-0">
-          
+
+          {/* Connection Setup Panel */}
+          <div className="bg-white rounded-lg border border-[#e6e9ef] p-4 flex flex-col gap-3.5 mb-2 shadow-2xs">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-xs text-slate-800 uppercase tracking-wider">Local Setup</span>
+              <div className="flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className="text-[10px] font-bold text-slate-500 uppercase">
+                  {isConnected ? "Connected" : "Disconnected"}
+                </span>
+              </div>
+            </div>
+
+            {/* OS Selector */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-semibold text-slate-600">Select OS</label>
+              <div className="grid grid-cols-3 gap-1 bg-slate-100 p-0.5 rounded">
+                {(['windows', 'mac', 'linux'] as const).map(os => (
+                  <button
+                    key={os}
+                    type="button"
+                    onClick={() => setSelectedOS(os)}
+                    className={`text-[10px] font-bold py-1 rounded transition-all capitalize cursor-pointer ${selectedOS === os ? "bg-white text-slate-800 shadow-xs" : "text-slate-500 hover:text-slate-850"}`}
+                  >
+                    {os}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Local Connector Instructions */}
+            <div className="bg-slate-50 rounded border border-slate-200 p-2 flex flex-col gap-1">
+              <span className="text-[10px] font-bold text-slate-700">1. Run Local Connector</span>
+              <code className="bg-slate-900 text-slate-300 p-1.5 rounded font-mono text-[9px] break-all select-all">
+                node local-connector.js
+              </code>
+            </div>
+
+            {/* Connect Docker Area */}
+            <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700">2. Docker Engine</span>
+                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${dockerConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                  {dockerConnected ? "Active" : "Offline"}
+                </span>
+              </div>
+              {!dockerConnected && (
+                <div className="bg-slate-50 rounded border border-slate-200 p-2 text-[9px] font-mono text-slate-655 leading-normal">
+                  <span>Start command:</span>
+                  <code className="block bg-slate-900 text-slate-300 p-1 rounded font-mono text-[9px] mt-1 break-all select-all">
+                    {selectedOS === 'windows' && `Start-Process "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"`}
+                    {selectedOS === 'mac' && `open -a Docker`}
+                    {selectedOS === 'linux' && `sudo systemctl start docker`}
+                  </code>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleConnectDocker}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] py-1.5 rounded transition-colors cursor-pointer text-center"
+              >
+                Connect Docker
+              </button>
+            </div>
+
+            {/* Connect Ollama Area */}
+            <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700">3. Ollama (Model)</span>
+                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${ollamaConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+                  {ollamaConnected ? "Active" : "Offline"}
+                </span>
+              </div>
+              {!ollamaConnected && (
+                <div className="bg-slate-50 rounded border border-slate-200 p-2 text-[9px] font-mono text-slate-655 leading-normal flex flex-col gap-1">
+                  <span>Commands:</span>
+                  <code className="bg-slate-900 text-slate-300 p-1 rounded font-mono text-[9px] break-all select-all">
+                    ollama serve
+                  </code>
+                  <code className="bg-slate-900 text-slate-300 p-1 rounded font-mono text-[9px] break-all select-all">
+                    ollama run llama3
+                  </code>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleConnectOllama}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] py-1.5 rounded transition-colors cursor-pointer text-center"
+              >
+                Connect Ollama
+              </button>
+            </div>
+
+            {connectionError && (
+              <div className="text-[10px] text-rose-600 bg-rose-50 border border-rose-100 p-2 rounded leading-normal">
+                ⚠️ {connectionError}
+              </div>
+            )}
+          </div>
+
           <div>
             <h2 className="text-slate-800 font-bold text-xs tracking-wider uppercase">Monitor Controls</h2>
             <p className="text-xs text-gray-500 mt-1">Configure active views and system diagnostics thresholds.</p>
@@ -974,7 +1150,7 @@ Rules:
           {/* Status filter selector */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-slate-700">Filter Containers</label>
-            <select 
+            <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="w-full bg-white border border-gray-300 rounded px-2.5 py-1.5 text-xs outline-none focus:border-[#ff4b4b] transition-all cursor-pointer font-medium"
@@ -988,7 +1164,7 @@ Rules:
 
           {/* Toggle specifications display */}
           <div className="flex items-center gap-2 mt-2">
-            <input 
+            <input
               type="checkbox"
               id="showSystem"
               checked={showSystemSpecs}
@@ -1005,7 +1181,7 @@ Rules:
           {/* Refresh system metrics */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-slate-700">System Metrics Pulse</label>
-            <button 
+            <button
               onClick={triggerMetricsRefresh}
               className="w-full bg-white hover:bg-gray-50 border border-gray-300 rounded py-2 px-3 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
             >
@@ -1023,18 +1199,16 @@ Rules:
                 <Cpu className="w-4 h-4 text-[#ff4b4b]" />
                 Copilot Brain
               </span>
-              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                activeLLMProvider === 'gemini' 
+              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${activeLLMProvider === 'gemini'
                   ? (geminiAvailable ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-100")
                   : (ollamaConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200")
-              }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${
-                  (activeLLMProvider === 'gemini' && geminiAvailable) || (activeLLMProvider === 'ollama' && ollamaConnected) 
-                    ? "bg-emerald-500" 
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${(activeLLMProvider === 'gemini' && geminiAvailable) || (activeLLMProvider === 'ollama' && ollamaConnected)
+                    ? "bg-emerald-500"
                     : "bg-amber-500 animate-pulse"
-                }`}></span>
-                {activeLLMProvider === 'gemini' 
-                  ? (geminiAvailable ? "Gemini Cloud Active" : "Gemini Off (No Secret)") 
+                  }`}></span>
+                {activeLLMProvider === 'gemini'
+                  ? (geminiAvailable ? "Gemini Cloud Active" : "Gemini Off (No Secret)")
                   : (ollamaConnected ? `${ollamaModel} Active` : "Ollama Offline Fallback")
                 }
               </span>
@@ -1050,9 +1224,8 @@ Rules:
               </button>
               <button
                 onClick={() => updateOllamaConfig(ollamaUrl, ollamaModel, 'ollama')}
-                className={`py-1 rounded-sm text-center cursor-pointer transition-all ${
-                  activeLLMProvider === 'ollama' ? "bg-white shadow-xs text-slate-950 font-bold" : "text-slate-500 hover:text-slate-800"
-                }`}
+                className={`py-1 rounded-sm text-center cursor-pointer transition-all ${activeLLMProvider === 'ollama' ? "bg-white shadow-xs text-slate-950 font-bold" : "text-slate-500 hover:text-slate-800"
+                  }`}
               >
                 🦙 Ollama
               </button>
@@ -1075,8 +1248,8 @@ Rules:
             ) : (
               <div className="flex flex-col gap-1.5">
                 <p className="text-[11px] text-slate-500 leading-normal">
-                  {ollamaConnected 
-                    ? `Successfully connected to local/cloud Ollama endpoint on model '${ollamaModel}'.` 
+                  {ollamaConnected
+                    ? `Successfully connected to local/cloud Ollama endpoint on model '${ollamaModel}'.`
                     : "Custom Ollama model is currently unreachable. Using diagnostic rule fallbacks."
                   }
                 </p>
@@ -1185,14 +1358,12 @@ Rules:
               <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 uppercase tracking-wider">
                 <span className="text-blue-500">🐳</span> Docker Target Engine
               </span>
-              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                dockerMode === 'simulation'
+              <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${dockerMode === 'simulation'
                   ? "bg-purple-50 text-purple-700 border border-purple-200"
                   : (dockerConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-100")
-              }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${
-                  dockerMode === 'simulation' || dockerConnected ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
-                }`}></span>
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${dockerMode === 'simulation' || dockerConnected ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
+                  }`}></span>
                 {dockerMode === 'simulation' ? "Simulated Sandbox" : (dockerConnected ? "Live Connection" : "Connection Failed")}
               </span>
             </div>
@@ -1207,9 +1378,8 @@ Rules:
               </button>
               <button
                 onClick={() => updateDockerConfig('live', dockerHostUrl)}
-                className={`py-1 rounded-sm text-center cursor-pointer transition-all ${
-                  dockerMode === 'live' ? "bg-white shadow-xs text-slate-950 font-bold" : "text-slate-500 hover:text-slate-800"
-                }`}
+                className={`py-1 rounded-sm text-center cursor-pointer transition-all ${dockerMode === 'live' ? "bg-white shadow-xs text-slate-950 font-bold" : "text-slate-500 hover:text-slate-800"
+                  }`}
               >
                 🐳 Live Host
               </button>
@@ -1279,7 +1449,7 @@ Rules:
 
         {/* Actionable Monitoring Center */}
         <main className="flex-1 p-6 md:p-8 flex flex-col gap-6 max-w-7xl mx-auto w-full overflow-y-auto">
-          
+
           {/* Custom Header Section */}
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-extrabold tracking-tight text-slate-900">
@@ -1297,19 +1467,18 @@ Rules:
                 <Terminal className="w-4 h-4 text-slate-600" />
                 <span className="text-xs font-bold text-slate-700">Describe Docker Issue</span>
               </div>
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border transition-all ${
-                ollamaConnected 
-                  ? "text-emerald-700 bg-emerald-50 border-emerald-150" 
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border transition-all ${ollamaConnected
+                  ? "text-emerald-700 bg-emerald-50 border-emerald-150"
                   : "text-amber-700 bg-amber-50 border-amber-100"
-              }`}>
+                }`}>
                 {ollamaConnected ? `Ollama (${ollamaModel}) Active` : "Local Rule Fallback Active"}
               </span>
             </div>
 
             <div className="p-4 md:p-5 flex flex-col gap-4">
-              
+
               <form onSubmit={(e) => { e.preventDefault(); executeDiagnosticQuery(queryInput); }} className="flex gap-2">
-                <input 
+                <input
                   type="text"
                   placeholder="Describe your issue (e.g. 'Show unhealthy containers', 'Explain core auth-api uptime logs', 'Check container resource levels')..."
                   value={queryInput}
@@ -1364,8 +1533,8 @@ Rules:
 
           {/* Clean Metric summary cards with the requested metrics adjustments */}
           {summary && (
-            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-              
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+
               <div className="bg-white p-4 rounded-xl border border-[#e6e9ef] shadow-2xs">
                 <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Total Containers</div>
                 <div className="text-lg font-bold mt-1 text-slate-800 flex items-baseline gap-1.5">
@@ -1380,24 +1549,10 @@ Rules:
                 </div>
               </div>
 
-              <div className="bg-white p-4 rounded-xl border border-[#e6e9ef] shadow-2xs">
-                <div className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">Healthy %</div>
-                <div className="text-lg font-bold mt-1 text-emerald-500 flex items-baseline gap-1.5">
-                  <span>{healthPercentage}%</span>
-                </div>
-              </div>
-
               <div className="bg-[#fffbeb] p-4 rounded-xl border border-amber-200 shadow-2xs">
                 <div className="text-[10px] text-amber-700 font-bold uppercase tracking-wider">Restarting</div>
                 <div className="text-lg font-bold mt-1 text-amber-700 flex items-baseline gap-1.5">
                   <span>{containers.filter(c => c.status === "restarting").length}</span>
-                </div>
-              </div>
-
-              <div className="bg-red-50 p-4 rounded-xl border border-red-100 shadow-2xs">
-                <div className="text-[10px] text-red-700 font-bold uppercase tracking-wider">Needs Investigation</div>
-                <div className="text-lg font-bold mt-1 text-red-600 flex items-baseline gap-1.5">
-                  <span>{unhealthyCount}</span>
                 </div>
               </div>
 
@@ -1418,20 +1573,19 @@ Rules:
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 {[
                   "Understanding Request",
-                  "Checking Container Health",
+                  "Querying Docker Socket",
                   "Reading System Logs",
-                  "Generating Health Evaluation"
+                  "Generating Evaluation"
                 ].map((step, sIdx) => {
                   const isDone = agentStepsCompleted.length > sIdx;
                   const isCurrent = agentStepsCompleted.length === sIdx;
                   return (
-                    <div 
-                      key={sIdx} 
-                      className={`p-3 rounded-lg border text-xs flex items-center gap-2 transition-all ${
-                        isDone ? "bg-emerald-50 border-emerald-200 text-emerald-800" :
-                        isCurrent ? "bg-red-50 border-red-200 text-red-700 animate-pulse font-medium" :
-                        "bg-slate-50 border-slate-100 text-slate-400"
-                      }`}
+                    <div
+                      key={sIdx}
+                      className={`p-3 rounded-lg border text-xs flex items-center gap-2 transition-all ${isDone ? "bg-emerald-50 border-emerald-200 text-emerald-800" :
+                          isCurrent ? "bg-red-50 border-red-200 text-red-700 animate-pulse font-medium" :
+                            "bg-slate-50 border-slate-100 text-slate-400"
+                        }`}
                     >
                       {isDone ? (
                         <Check className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -1451,7 +1605,7 @@ Rules:
             const insights = getDynamicInsights(agentResult.commentary, containers);
             return (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
+
                 {/* AI Incident Summary Panel Box */}
                 <div className="bg-slate-900 text-white rounded-xl p-5 md:p-6 shadow-md flex flex-col justify-between">
                   <div>
@@ -1469,11 +1623,10 @@ Rules:
                         </p>
                         <div className="mt-2 flex items-center gap-1.5">
                           <span className="text-[10px] text-slate-400 uppercase tracking-wider">Status:</span>
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                            insights.status === 'Critical' ? 'bg-red-950 text-red-300 border border-red-800' :
-                            insights.status === 'Warning' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
-                            'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                          }`}>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${insights.status === 'Critical' ? 'bg-red-950 text-red-300 border border-red-800' :
+                              insights.status === 'Warning' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                                'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                            }`}>
                             {insights.status}
                           </span>
                         </div>
@@ -1517,7 +1670,7 @@ Rules:
 
                 {/* Comprehensive Output commentary box */}
                 <div className="bg-white rounded-xl border border-[#e6e9ef] shadow-xs p-5 md:p-6 lg:col-span-2 flex flex-col gap-4">
-                  
+
                   <div className="flex items-center gap-2 border-b border-gray-100 pb-2.5">
                     <Sparkles className="w-4 h-4 text-red-500" />
                     <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">AI Diagnostic Output</h3>
@@ -1525,7 +1678,7 @@ Rules:
 
                   {/* Response generated commentary */}
                   <div className="bg-slate-50 p-4 border border-slate-100 rounded-lg text-slate-850 font-sans text-xs flex-1 overflow-y-auto flex flex-col gap-4">
-                    
+
                     {/* Human Summary (displayed for both modes at the top) */}
                     {insights.humanSummary && (
                       <div className="bg-slate-100 border border-slate-200 rounded-lg p-4">
@@ -1548,7 +1701,6 @@ Rules:
                               <tr>
                                 {queryResponseColumns.includes('Container') && <th className="p-2.5 font-extrabold">Container</th>}
                                 {queryResponseColumns.includes('Status') && <th className="p-2.5 font-extrabold">Status</th>}
-                                {queryResponseColumns.includes('Health') && <th className="p-2.5 font-extrabold">Health</th>}
                                 {queryResponseColumns.includes('CPU') && <th className="p-2.5 font-extrabold text-right">CPU</th>}
                                 {queryResponseColumns.includes('Memory') && <th className="p-2.5 font-extrabold text-right">Memory</th>}
                                 {queryResponseColumns.includes('Image') && <th className="p-2.5 font-extrabold">Image</th>}
@@ -1556,29 +1708,17 @@ Rules:
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 text-slate-700">
-                              {containers.map((c) => (
+                              {(agentResult?.containersAtEnd || containers).map((c: any) => (
                                 <tr key={c.id} className="hover:bg-slate-50/40 transition-colors">
                                   {queryResponseColumns.includes('Container') && (
                                     <td className="p-2.5 font-sans font-extrabold text-slate-800">{c.name}</td>
                                   )}
                                   {queryResponseColumns.includes('Status') && (
                                     <td className="p-2.5 font-sans">
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold font-sans ${
-                                        c.status === "running" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
-                                        "bg-slate-100 text-slate-650 border border-slate-200"
-                                      }`}>
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold font-sans ${c.status === "running" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                                          "bg-slate-100 text-slate-650 border border-slate-200"
+                                        }`}>
                                         {c.status.toUpperCase()}
-                                      </span>
-                                    </td>
-                                  )}
-                                  {queryResponseColumns.includes('Health') && (
-                                    <td className="p-2.5 font-sans">
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold font-sans ${
-                                        c.health === "healthy" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
-                                        c.health === "unhealthy" ? "bg-rose-50 text-rose-700 border border-rose-200 animate-pulse" :
-                                        "text-slate-400 font-semibold"
-                                      }`}>
-                                        {c.health === "healthy" ? "HEALTHY" : c.health === "unhealthy" ? "UNHEALTHY" : "OFFLINE"}
                                       </span>
                                     </td>
                                   )}
@@ -1624,20 +1764,18 @@ Rules:
                                     <tr key={idx} className="hover:bg-slate-50/40">
                                       <td className="px-3 py-2 font-bold text-slate-800">{item.container}</td>
                                       <td className="px-3 py-2">
-                                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                          item.state.toLowerCase().includes('exit') || item.state.toLowerCase().includes('stop')
+                                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${item.state.toLowerCase().includes('exit') || item.state.toLowerCase().includes('stop')
                                             ? 'bg-amber-100 text-amber-800'
                                             : 'bg-emerald-100 text-emerald-800'
-                                        }`}>
+                                          }`}>
                                           {item.state}
                                         </span>
                                       </td>
                                       <td className="px-3 py-2">
-                                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                          item.health.toLowerCase().includes('unhealthy')
+                                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${item.health.toLowerCase().includes('unhealthy')
                                             ? 'bg-rose-100 text-rose-800'
                                             : 'bg-emerald-100 text-emerald-800'
-                                        }`}>
+                                          }`}>
                                           {item.health}
                                         </span>
                                       </td>
@@ -1719,7 +1857,7 @@ Rules:
               <div className="flex-1">
                 <h4 className="font-bold text-amber-800 text-xs">Diagnostic Gateway Status</h4>
                 <p className="text-xs text-amber-700 mt-1">{agentError}</p>
-                <button 
+                <button
                   onClick={() => executeDiagnosticQuery(lastQuery)}
                   className="text-xs font-bold text-red-500 underline mt-1.5 block hover:text-red-700 bg-transparent border-0 cursor-pointer outline-none"
                 >
@@ -1731,7 +1869,7 @@ Rules:
 
           {/* Monitor Center Tabs */}
           <div className="bg-white rounded-xl border border-[#e6e9ef] shadow-xs p-5 md:p-6 flex flex-col gap-5">
-            
+
             <div className="flex border-b border-[#e6e9ef] select-none text-xs font-bold gap-6 cursor-pointer text-slate-400">
               <button
                 className={`pb-2.5 relative transition-all uppercase tracking-wide ${activeTab === "containers" ? "text-red-500 border-b-2 border-red-500 font-bold" : "hover:text-slate-800 font-medium"}`}
@@ -1756,15 +1894,15 @@ Rules:
             {/* TAB CONTENT: ACTIVE CONTAINERS */}
             {activeTab === "containers" && (
               <div className="flex flex-col gap-4">
-                
+
                 {controlError && (
                   <div className="bg-rose-50 border border-rose-200 p-3 rounded-lg flex items-center justify-between text-rose-800 text-xs">
                     <div className="flex items-center gap-2">
                       <AlertOctagon className="w-4 h-4 text-rose-500 shrink-0" />
                       <span>{controlError}</span>
                     </div>
-                    <button 
-                      onClick={() => setControlError(null)} 
+                    <button
+                      onClick={() => setControlError(null)}
                       className="text-[10px] font-bold bg-transparent text-rose-500 hover:text-rose-700 underline border-none cursor-pointer outline-none"
                     >
                       DISMISS
@@ -1778,7 +1916,7 @@ Rules:
                 <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
                   <div className="relative w-full sm:w-64">
                     <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-2.5" />
-                    <input 
+                    <input
                       type="text"
                       placeholder="Search container list..."
                       value={searchTerm}
@@ -1800,7 +1938,6 @@ Rules:
                       <tr>
                         <th className="p-3">Container details</th>
                         <th className="p-3">Uptime / Age</th>
-                        <th className="p-3">Health Status</th>
                         <th className="p-3 text-right">CPU &amp; Memory Specs</th>
                         <th className="p-3 text-center">Diagnostics Controls</th>
                       </tr>
@@ -1808,7 +1945,7 @@ Rules:
                     <tbody className="divide-y divide-[#e6e9ef] text-slate-700">
                       {filteredContainers.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="text-center p-8 text-gray-400">
+                          <td colSpan={4} className="text-center p-8 text-gray-400">
                             No container profiles found. Try clearing filters.
                           </td>
                         </tr>
@@ -1817,11 +1954,10 @@ Rules:
                           <tr key={c.id} className="hover:bg-slate-50/40 transition-colors">
                             <td className="p-3">
                               <div className="font-extrabold text-slate-800 text-sm flex items-center gap-1.5">
-                                <span className={`w-2 h-2 rounded-full ${
-                                  c.status === "running" ? "bg-emerald-500" :
-                                  c.status === "restarting" ? "bg-amber-500 animate-pulse" :
-                                  "bg-gray-400"
-                                }`} />
+                                <span className={`w-2 h-2 rounded-full ${c.status === "running" ? "bg-emerald-500" :
+                                    c.status === "restarting" ? "bg-amber-500 animate-pulse" :
+                                      "bg-gray-400"
+                                  }`} />
                                 {c.name}
                               </div>
                               <div className="font-mono text-[10px] text-slate-400 mt-1">Image: {c.image}</div>
@@ -1829,7 +1965,7 @@ Rules:
                                 ID: {c.id} {c.ports?.length ? `| Map: [${c.ports.join(", ")}]` : ""}
                               </div>
                             </td>
-                            
+
                             <td className="p-3 text-xs leading-relaxed">
                               <div className="flex items-center gap-1 text-slate-700">
                                 <Clock className="w-3.5 h-3.5 text-slate-400" />
@@ -1840,37 +1976,15 @@ Rules:
                               </div>
                             </td>
 
-                            <td className="p-3 text-xs">
-                              {c.health === "healthy" && (
-                                <div className="text-emerald-700 font-bold flex items-center gap-1">
-                                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                                  <span>Healthy</span>
-                                </div>
-                              )}
-                              {c.health === "unhealthy" && (
-                                <div className="text-red-700 font-bold flex items-center gap-1 leading-snug">
-                                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-                                  <div>
-                                    <span>Unhealthy</span>
-                                    <span className="block text-[10px] font-normal text-slate-400">{c.issue}</span>
-                                  </div>
-                                </div>
-                              )}
-                              {c.health === "none" && (
-                                <span className="text-slate-400 font-semibold">Offline</span>
-                              )}
-                            </td>
-
                             <td className="p-3 text-right">
                               <div className="font-bold text-slate-800 font-mono text-[11px]">{c.cpu} CPU</div>
                               <div className="text-[10px] text-slate-500 font-mono mt-0.5">{c.memory}</div>
                               <div className="w-20 bg-gray-100 h-1 rounded-full overflow-hidden inline-block mt-1">
-                                <div 
-                                  className={`h-full ${
-                                    parseFloat(c.memoryUsagePercentage) > 90 ? "bg-red-500" : 
-                                    parseFloat(c.memoryUsagePercentage) > 50 ? "bg-amber-500" : 
-                                    "bg-emerald-500"
-                                  }`}
+                                <div
+                                  className={`h-full ${parseFloat(c.memoryUsagePercentage) > 90 ? "bg-red-500" :
+                                      parseFloat(c.memoryUsagePercentage) > 50 ? "bg-amber-500" :
+                                        "bg-emerald-500"
+                                    }`}
                                   style={{ width: c.memoryUsagePercentage }}
                                 />
                               </div>
@@ -1878,78 +1992,78 @@ Rules:
 
                             {/* DIRECT CONTROLS & TELEMETRY HUD */}
                             <td className="p-3">
-                               <div className="flex flex-col gap-2 max-w-[190px] mx-auto">
-                                 {/* 1. CORE OPERATIONS (START / STOP / RESTART) */}
-                                 <div className="flex items-center gap-1.5 justify-center border-b border-dashed border-slate-200 pb-2">
-                                   {c.status !== "running" ? (
-                                     <button
-                                       onClick={() => handleContainerControl(c.name, "start")}
-                                       disabled={!!actionInProgress[c.name]}
-                                       className="flex-1 py-1 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 transition-all shadow-xs disabled:opacity-55 cursor-pointer"
-                                     >
-                                       {actionInProgress[c.name] === "start" ? (
-                                         <RefreshCw className="w-3 h-3 animate-spin" />
-                                       ) : (
-                                         <Play className="w-3 h-3 fill-white" />
-                                       )}
-                                       <span>START</span>
-                                     </button>
-                                   ) : (
-                                     <button
-                                       onClick={() => handleContainerControl(c.name, "stop")}
-                                       disabled={!!actionInProgress[c.name]}
-                                       className="flex-1 py-1 px-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 transition-all shadow-xs disabled:opacity-55 cursor-pointer"
-                                     >
-                                       {actionInProgress[c.name] === "stop" ? (
-                                         <RefreshCw className="w-3 h-3 animate-spin" />
-                                       ) : (
-                                         <Square className="w-3 h-3 fill-white" />
-                                       )}
-                                       <span>STOP</span>
-                                     </button>
-                                   )}
- 
-                                   <button
-                                     onClick={() => handleContainerControl(c.name, "restart")}
-                                     disabled={!!actionInProgress[c.name] || c.status !== "running"}
-                                     className="flex-1 py-1 px-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-100 disabled:text-slate-350 disabled:shadow-none text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 transition-all shadow-xs disabled:opacity-55 cursor-pointer"
-                                   >
-                                     {actionInProgress[c.name] === "restart" ? (
-                                       <RefreshCw className="w-3 h-3 animate-spin" />
-                                     ) : (
-                                       <RefreshCw className="w-3 h-3" />
-                                     )}
-                                     <span>RESTART</span>
-                                   </button>
-                                 </div>
- 
-                                 {/* 2. DIAGNOSTIC HARNESS HUD (DIRECT INSPECT TERMINALS) */}
-                                 <div className="grid grid-cols-2 gap-1">
-                                   <button
-                                     onClick={() => openTerminalHUD(c, "logs")}
-                                     className="p-1 px-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-slate-700 text-[10px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                                   >
-                                     <FileText className="w-2.5 h-2.5" />
-                                     <span>Logs</span>
-                                   </button>
- 
-                                   <button
-                                     onClick={() => openTerminalHUD(c, "stats")}
-                                     className="p-1 px-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded text-blue-700 text-[10px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                                   >
-                                     <LineChart className="w-2.5 h-2.5" />
-                                     <span>Metrics</span>
-                                   </button>
- 
-                                   <button
-                                     onClick={() => openTerminalHUD(c, "inspect")}
-                                     className="p-1 px-1.5 bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded text-slate-500 text-[10px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer col-span-2 text-center"
-                                   >
-                                     <Settings className="w-2.5 h-2.5" />
-                                     <span>Inspect JSON Specs</span>
-                                   </button>
-                                 </div>
-                               </div>
+                              <div className="flex flex-col gap-2 max-w-[190px] mx-auto">
+                                {/* 1. CORE OPERATIONS (START / STOP / RESTART) */}
+                                <div className="flex items-center gap-1.5 justify-center border-b border-dashed border-slate-200 pb-2">
+                                  {c.status !== "running" ? (
+                                    <button
+                                      onClick={() => handleContainerControl(c.name, "start")}
+                                      disabled={!!actionInProgress[c.name]}
+                                      className="flex-1 py-1 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 transition-all shadow-xs disabled:opacity-55 cursor-pointer"
+                                    >
+                                      {actionInProgress[c.name] === "start" ? (
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Play className="w-3 h-3 fill-white" />
+                                      )}
+                                      <span>START</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleContainerControl(c.name, "stop")}
+                                      disabled={!!actionInProgress[c.name]}
+                                      className="flex-1 py-1 px-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 transition-all shadow-xs disabled:opacity-55 cursor-pointer"
+                                    >
+                                      {actionInProgress[c.name] === "stop" ? (
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Square className="w-3 h-3 fill-white" />
+                                      )}
+                                      <span>STOP</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    onClick={() => handleContainerControl(c.name, "restart")}
+                                    disabled={!!actionInProgress[c.name] || c.status !== "running"}
+                                    className="flex-1 py-1 px-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-100 disabled:text-slate-350 disabled:shadow-none text-white font-bold rounded text-[10px] flex items-center justify-center gap-1 transition-all shadow-xs disabled:opacity-55 cursor-pointer"
+                                  >
+                                    {actionInProgress[c.name] === "restart" ? (
+                                      <RefreshCw className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="w-3 h-3" />
+                                    )}
+                                    <span>RESTART</span>
+                                  </button>
+                                </div>
+
+                                {/* 2. DIAGNOSTIC HARNESS HUD (DIRECT INSPECT TERMINALS) */}
+                                <div className="grid grid-cols-2 gap-1">
+                                  <button
+                                    onClick={() => openTerminalHUD(c, "logs")}
+                                    className="p-1 px-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-slate-700 text-[10px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                                  >
+                                    <FileText className="w-2.5 h-2.5" />
+                                    <span>Logs</span>
+                                  </button>
+
+                                  <button
+                                    onClick={() => openTerminalHUD(c, "stats")}
+                                    className="p-1 px-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded text-blue-700 text-[10px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                                  >
+                                    <LineChart className="w-2.5 h-2.5" />
+                                    <span>Metrics</span>
+                                  </button>
+
+                                  <button
+                                    onClick={() => openTerminalHUD(c, "inspect")}
+                                    className="p-1 px-1.5 bg-slate-50 hover:bg-slate-100 border border-gray-200 rounded text-slate-500 text-[10px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer col-span-2 text-center"
+                                  >
+                                    <Settings className="w-2.5 h-2.5" />
+                                    <span>Inspect JSON Specs</span>
+                                  </button>
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -1998,7 +2112,7 @@ Rules:
             {/* TAB CONTENT: DEEP HARDWARE SPECIFICATIONS */}
             {activeTab === "system" && engineInfo && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-mono text-xs p-4 bg-slate-50 rounded-lg border border-slate-100">
-                
+
                 <div className="flex flex-col gap-3">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">daemon metadata</h4>
                   <div className="flex justify-between border-b pb-1">
@@ -2047,19 +2161,19 @@ Rules:
           {/* Clean system specifications container at the base */}
           {showSystemSpecs && engineInfo && (
             <div className="bg-[#f0f2f6] rounded-xl p-3 border border-[#e6e9ef] flex flex-col sm:flex-row sm:items-center justify-between gap-2 font-mono text-[11px] text-gray-400">
-               <div>
-                 <span className="font-bold text-slate-500">Local Docker Engine:</span> {engineInfo.os} ({engineInfo.kernel})
-               </div>
-               <div>
-                 <span className="font-bold text-slate-500">Target Pipeline Socket:</span> /var/run/docker.sock
-               </div>
+              <div>
+                <span className="font-bold text-slate-500">Local Docker Engine:</span> {engineInfo.os} ({engineInfo.kernel})
+              </div>
+              <div>
+                <span className="font-bold text-slate-500">Target Pipeline Socket:</span> /var/run/docker.sock
+              </div>
             </div>
           )}
 
           {/* INTERACTIVE TELEMETRY HUD TERMINAL MODAL */}
           {activeTerminalContainer && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in" id="terminal-modal">
-              <div 
+              <div
                 className="bg-slate-900 text-slate-100 rounded-xl max-w-4xl w-full border border-slate-700 shadow-2xl overflow-hidden flex flex-col h-[85vh] sm:h-[75vh]"
                 onClick={(e) => e.stopPropagation()}
                 id="terminal-hud"
@@ -2070,16 +2184,15 @@ Rules:
                     <div className="p-1 px-1.5 bg-slate-800 text-xs text-slate-400 font-mono rounded select-none">HUD</div>
                     <div>
                       <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
-                        <span className={`w-2.5 h-2.5 rounded-full ${
-                          activeTerminalContainer.status === "running" ? "bg-emerald-500" : "bg-gray-500"
-                        }`} />
+                        <span className={`w-2.5 h-2.5 rounded-full ${activeTerminalContainer.status === "running" ? "bg-emerald-500" : "bg-gray-500"
+                          }`} />
                         {activeTerminalContainer.name}
                       </h3>
                       <p className="text-[10px] text-slate-400 font-mono">ID: {activeTerminalContainer.id} | Image: {activeTerminalContainer.image}</p>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => setActiveTerminalContainer(null)} 
+                  <button
+                    onClick={() => setActiveTerminalContainer(null)}
                     className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer"
                   >
                     <X className="w-5 h-5" />
@@ -2088,29 +2201,26 @@ Rules:
 
                 {/* Sub tabs selector */}
                 <div className="bg-slate-950 px-5 border-b border-slate-800/80 flex gap-4 text-xs font-mono">
-                  <button 
+                  <button
                     onClick={() => setTerminalTab("logs")}
-                    className={`py-3 font-semibold border-b-2 px-1 transition-all flex items-center gap-1.5 cursor-pointer ${
-                      terminalTab === "logs" ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-400 hover:text-slate-150"
-                    }`}
+                    className={`py-3 font-semibold border-b-2 px-1 transition-all flex items-center gap-1.5 cursor-pointer ${terminalTab === "logs" ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-400 hover:text-slate-150"
+                      }`}
                   >
                     <Terminal className="w-3.5 h-3.5" />
                     <span>Diagnostics Logs</span>
                   </button>
-                  <button 
+                  <button
                     onClick={() => setTerminalTab("stats")}
-                    className={`py-3 font-semibold border-b-2 px-1 transition-all flex items-center gap-1.5 cursor-pointer ${
-                      terminalTab === "stats" ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-400 hover:text-slate-150"
-                    }`}
+                    className={`py-3 font-semibold border-b-2 px-1 transition-all flex items-center gap-1.5 cursor-pointer ${terminalTab === "stats" ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-400 hover:text-slate-150"
+                      }`}
                   >
                     <Activity className="w-3.5 h-3.5" />
                     <span>Live Metrics</span>
                   </button>
-                  <button 
+                  <button
                     onClick={() => setTerminalTab("inspect")}
-                    className={`py-3 font-semibold border-b-2 px-1 transition-all flex items-center gap-1.5 cursor-pointer ${
-                      terminalTab === "inspect" ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-400 hover:text-slate-150"
-                    }`}
+                    className={`py-3 font-semibold border-b-2 px-1 transition-all flex items-center gap-1.5 cursor-pointer ${terminalTab === "inspect" ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-400 hover:text-slate-150"
+                      }`}
                   >
                     <Settings className="w-3.5 h-3.5" />
                     <span>JSON Inspect Specs</span>
@@ -2124,8 +2234,8 @@ Rules:
                       <div className="flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-2 select-none mb-2">
                         <span>Streaming terminal stdout/stderr logs...</span>
                         <div className="flex items-center gap-2">
-                          <button 
-                            onClick={() => fetchTerminalLogs(activeTerminalContainer.name)} 
+                          <button
+                            onClick={() => fetchTerminalLogs(activeTerminalContainer.name)}
                             className="bg-slate-800 hover:bg-slate-750 hover:text-white px-2 py-1 rounded transition-all cursor-pointer flex items-center gap-1 text-[10px]"
                           >
                             <RefreshCw className={`w-3 h-3 ${isTerminalLoading ? "animate-spin" : ""}`} />
@@ -2134,7 +2244,7 @@ Rules:
                           <span className="bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-widest animate-pulse">LIVE FEED</span>
                         </div>
                       </div>
-                      
+
                       {isTerminalLoading && terminalLogs.length === 0 ? (
                         <div className="flex items-center justify-center py-20 text-slate-400 gap-2">
                           <RefreshCw className="w-5 h-5 animate-spin text-emerald-500" />
@@ -2155,7 +2265,7 @@ Rules:
                             }
                             return (
                               <div key={idx} className={`leading-relaxed whitespace-pre font-mono text-[11px] ${textClass}`}>
-                                <span className="text-slate-600 mr-3 select-none">{(idx+1).toString().padStart(3, '0')}</span>
+                                <span className="text-slate-600 mr-3 select-none">{(idx + 1).toString().padStart(3, '0')}</span>
                                 {log}
                               </div>
                             );
@@ -2186,9 +2296,8 @@ Rules:
                         </div>
                         <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 flex flex-col gap-1">
                           <span className="text-[10px] text-slate-400 uppercase font-semibold">Runtime Status</span>
-                          <div className={`text-xl font-extrabold uppercase ${
-                            activeTerminalContainer.status === 'running' ? "text-emerald-400" : "text-gray-400"
-                          }`}>
+                          <div className={`text-xl font-extrabold uppercase ${activeTerminalContainer.status === 'running' ? "text-emerald-400" : "text-gray-400"
+                            }`}>
                             {activeTerminalContainer.status}
                           </div>
                           <div className="text-[9px] text-slate-500">Active uptime check: {activeTerminalContainer.uptime}</div>
@@ -2207,8 +2316,8 @@ Rules:
                             </div>
                             <div className="h-6 bg-slate-900 rounded border border-slate-800 overflow-hidden relative flex items-center">
                               {/* Slanted lines backg */}
-                              <div 
-                                className="h-full bg-emerald-500/25 transition-all duration-500" 
+                              <div
+                                className="h-full bg-emerald-500/25 transition-all duration-500"
                                 style={{ width: activeTerminalContainer.cpu }}
                               />
                               <span className="absolute left-3 text-[10px] font-semibold text-white drop-shadow-md">Active cores scheduler response: {activeTerminalContainer.cpu} percentage load</span>
@@ -2222,8 +2331,8 @@ Rules:
                               <span>{activeTerminalContainer.memory} utilized</span>
                             </div>
                             <div className="h-6 bg-slate-900 rounded border border-slate-800 overflow-hidden relative flex items-center">
-                              <div 
-                                className="h-full bg-blue-500/30 transition-all duration-500" 
+                              <div
+                                className="h-full bg-blue-500/30 transition-all duration-500"
                                 style={{ width: activeTerminalContainer.memoryUsagePercentage }}
                               />
                               <span className="absolute left-3 text-[10px] font-semibold text-white drop-shadow-md">Real-time address allocation ratio: {activeTerminalContainer.memoryUsagePercentage}</span>
@@ -2235,13 +2344,13 @@ Rules:
                   )}
 
                   {terminalTab === "inspect" && (
-                     <div className="flex flex-col gap-3">
-                       <div className="flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-2 select-none">
-                         <span>Low-level system manifest JSON variables...</span>
-                         <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 text-[10px]">FORMAT: DOCKER FILE v1.40</span>
-                       </div>
-                       <pre className="bg-slate-950 p-4 rounded-lg border border-slate-800 text-[11px] leading-relaxed text-emerald-400 overflow-x-auto font-mono max-h-[380px] select-all">
-{`{
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-2 select-none">
+                        <span>Low-level system manifest JSON variables...</span>
+                        <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 text-[10px]">FORMAT: DOCKER FILE v1.40</span>
+                      </div>
+                      <pre className="bg-slate-950 p-4 rounded-lg border border-slate-800 text-[11px] leading-relaxed text-emerald-400 overflow-x-auto font-mono max-h-[380px] select-all">
+                        {`{
   "Id": "sha256:d1f3e7a2b90ce883fb1df94b4b0051e5040081d4da${activeTerminalContainer.id}",
   "Created": "2026-06-08T21:21:13.402Z",
   "Path": "/docker-entrypoint.sh",
@@ -2280,16 +2389,16 @@ Rules:
     "Image": "${activeTerminalContainer.image}"
   }
 }`}
-                       </pre>
-                     </div>
+                      </pre>
+                    </div>
                   )}
                 </div>
 
-                 {/* Footer Controls inside Modal */}
+                {/* Footer Controls inside Modal */}
                 <div className="bg-slate-950 px-5 py-4 border-t border-slate-800 flex items-center justify-between">
                   <div className="flex gap-2">
                     {activeTerminalContainer.status !== "running" ? (
-                      <button 
+                      <button
                         onClick={() => handleContainerControl(activeTerminalContainer.name, "start")}
                         disabled={!!actionInProgress[activeTerminalContainer.name]}
                         className="bg-emerald-650 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
@@ -2302,7 +2411,7 @@ Rules:
                         <span>START CONTAINER</span>
                       </button>
                     ) : (
-                      <button 
+                      <button
                         onClick={() => handleContainerControl(activeTerminalContainer.name, "stop")}
                         disabled={!!actionInProgress[activeTerminalContainer.name]}
                         className="bg-rose-650 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
@@ -2315,8 +2424,8 @@ Rules:
                         <span>STOP CONTAINER</span>
                       </button>
                     )}
- 
-                    <button 
+
+                    <button
                       onClick={() => handleContainerControl(activeTerminalContainer.name, "restart")}
                       disabled={!!actionInProgress[activeTerminalContainer.name] || activeTerminalContainer.status !== "running"}
                       className="bg-amber-600 hover:bg-amber-700 disabled:bg-slate-800 disabled:text-slate-550 text-white font-bold px-4 py-2 rounded text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
@@ -2330,7 +2439,7 @@ Rules:
                     </button>
                   </div>
 
-                  <button 
+                  <button
                     onClick={() => setActiveTerminalContainer(null)}
                     className="bg-slate-850 hover:bg-slate-800 text-slate-300 font-semibold px-4 py-2 rounded text-xs transition-colors cursor-pointer"
                   >

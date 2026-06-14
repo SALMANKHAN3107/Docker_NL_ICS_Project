@@ -21,7 +21,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
   // Middleware
   app.use(express.json());
@@ -650,7 +650,7 @@ Rules:
     });
   }
 
-  const HOST = process.env.HOST || "localhost";
+  const HOST = process.env.HOST || "0.0.0.0";
   const server = app.listen(PORT, HOST, async () => {
     console.log(`[Ready] Docker NL Health Dashboard server active on http://${HOST}:${PORT}`);
     
