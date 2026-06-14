@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Integration Diagnostics Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0b0f19;
+            --bg-secondary: #161e2e;
+            --text-main: #f9fafb;
+            --text-muted: #9ca3af;
+            --accent-color: #3b82f6;
+            --accent-hover: #2563eb;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --border-color: #1f2937;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            line-height: 1.5;
+            padding: 2rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            border-bottom: 1px dashed var(--border-color);
+            padding-bottom: 0.5rem;
+            color: #f3f4f6;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .status-badge.unknown {
+            background-color: #4b5563;
+            color: #d1d5db;
+        }
+
+        .status-badge.online {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: var(--success-color);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-badge.offline {
+            background-color: rgba(239, 68, 68, 0.15);
+            color: var(--error-color);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.25rem;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            outline: none;
+        }
+
+        .btn:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .btn.secondary {
+            background-color: #374151;
+            color: #f3f4f6;
+        }
+
+        .btn.secondary:hover {
+            background-color: #4b5563;
+        }
+
+        .btn:disabled {
+            background-color: #4b5563;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .meta-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            font-size: 0.85rem;
+        }
+
+        .meta-item {
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #37415150;
+            padding-bottom: 0.5rem;
+        }
+
+        .meta-value {
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .log-terminal {
+            background-color: #030712;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            height: 300px;
+            overflow-y: auto;
+            color: #60a5fa;
+            margin-top: 1rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-terminal.error {
+            color: var(--error-color);
+            background-color: #7f1d1d20;
+            border-color: #b91c1c40;
+        }
+
+        .log-terminal.success {
+            color: #34d399;
+            background-color: #064e3b20;
+            border-color: #04785740;
+        }
+
+        .loading-spinner {
+            border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 50%;
+            border-top: 2px solid white;
+            width: 1rem;
+            height: 1rem;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>🐳 Docker Engine Diagnostics</h1>
+            <p class="subtitle">Diagnostic workshop to verify daemon status, permissions, list containers, and test metrics polling.</p>
+        </div>
+        <a href="/ollama-test" style="font-size: 0.85rem; color: #60a5fa; text-decoration: none; font-weight: 600;">← Go to Ollama Test</a>
+    </header>
+
+    <div class="grid">
+        <!-- Card 1: Connection Health -->
+        <div class="card">
+            <div class="card-title">
+                Docker connectivity Status
+                <span id="conn-badge" class="status-badge unknown">Unknown</span>
+            </div>
+            
+            <div class="meta-list">
+                <div class="meta-item">
+                    <span class="meta-label">Connection Status:</span>
+                    <span id="meta-status" class="meta-value">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Docker Version:</span>
+                    <span id="meta-version" class="meta-value">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Container Count:</span>
+                    <span id="meta-count" class="meta-value">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Engine Source:</span>
+                    <span id="meta-source" class="meta-value">-</span>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                <button id="btn-test" class="btn" onclick="testConnection()">
+                    Test Docker Connection
+                </button>
+            </div>
+        </div>
+
+        <!-- Card 2: Operations Controls -->
+        <div class="card" style="display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+                <div class="card-title">Orchestration Diagnostics</div>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+                    Perform dry-runs against the local engine to retrieve raw stats and active list arrays.
+                </p>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                <button id="btn-list" class="btn secondary" onclick="listContainers()">
+                    List Containers
+                </button>
+                <button id="btn-metrics" class="btn secondary" onclick="getMetrics()">
+                    Get Container Metrics
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Output Logs Console -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <div class="card-title">Raw SDK Output Terminal</div>
+        <div id="output-log" class="log-terminal">System idling. Run diagnostics test parameters to display log outputs...</div>
+    </div>
+
+    <script>
+        const API_TEST = "/api/docker/test-connection";
+        const API_LIST = "/api/docker/test-containers";
+        const API_METRICS = "/api/docker/test-metrics";
+
+        async function testConnection() {
+            const btn = document.getElementById("btn-test");
+            const badge = document.getElementById("conn-badge");
+            const logTerm = document.getElementById("output-log");
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span> Connecting...';
+            logTerm.className = "log-terminal";
+            logTerm.innerText = "Accessing local socket / pipe...\nInitializing Dockerode verification handshakes...\n";
+            
+            badge.className = "status-badge unknown";
+            badge.innerText = "Testing...";
+
+            try {
+                const res = await fetch(API_TEST);
+                const data = await res.json();
+                
+                if (data.success) {
+                    badge.className = "status-badge online";
+                    badge.innerText = "Connected";
+                    
+                    document.getElementById("meta-status").innerText = "Docker Connected";
+                    document.getElementById("meta-version").innerText = data.info.version;
+                    document.getElementById("meta-count").innerText = data.info.containerCount;
+                    document.getElementById("meta-source").innerText = data.info.source;
+                    
+                    logTerm.className = "log-terminal success";
+                    logTerm.innerText = `[OK] Docker Daemon reached successfully via local SDK discovery.\n\nSYSTEM DETAIL:\n${JSON.stringify(data.info, null, 2)}`;
+                } else {
+                    badge.className = "status-badge offline";
+                    badge.innerText = "Offline";
+                    
+                    document.getElementById("meta-status").innerText = "Not Connected";
+                    document.getElementById("meta-version").innerText = "-";
+                    document.getElementById("meta-count").innerText = "-";
+                    document.getElementById("meta-source").innerText = "-";
+                    
+                    logTerm.className = "log-terminal error";
+                    logTerm.innerText = `[ERROR] Not connected to local Docker.\nReason: ${data.error}\n\nTroubleshooting:\n- Make sure Docker Desktop is running.`;
+                }
+            } catch (err) {
+                badge.className = "status-badge offline";
+                badge.innerText = "Error";
+                
+                document.getElementById("meta-status").innerText = "Not Connected";
+                document.getElementById("meta-version").innerText = "-";
+                document.getElementById("meta-count").innerText = "-";
+                document.getElementById("meta-source").innerText = "-";
+                
+                logTerm.className = "log-terminal error";
+                logTerm.innerText = `[CRITICAL] Not connected to local Docker.\nHTTP Gateway query failed: ${err.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Test Docker Connection";
+            }
+        }
+
+        async function listContainers() {
+            const btn = document.getElementById("btn-list");
+            const logTerm = document.getElementById("output-log");
+            
+            btn.disabled = true;
+            logTerm.className = "log-terminal";
+            logTerm.innerText = "Requesting docker list containers arrays...\n";
+
+            try {
+                const res = await fetch(API_LIST);
+                const data = await res.json();
+                
+                if (data.success) {
+                    logTerm.className = "log-terminal success";
+                    logTerm.innerText = `[OK] Retrieved ${data.count} containers from active list:\n\n${JSON.stringify(data.containers, null, 2)}`;
+                } else {
+                    logTerm.className = "log-terminal error";
+                    logTerm.innerText = `[ERROR] Not connected to local Docker.\nReason: ${data.error}`;
+                }
+            } catch (err) {
+                logTerm.className = "log-terminal error";
+                logTerm.innerText = `[CRITICAL] Not connected to local Docker.\nHTTP Query failed: ${err.message}`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function getMetrics() {
+            const btn = document.getElementById("btn-metrics");
+            const logTerm = document.getElementById("output-log");
+            
+            btn.disabled = true;
+            logTerm.className = "log-terminal";
+            logTerm.innerText = "Requesting metrics analysis telemetry logs...\n";
+
+            try {
+                const res = await fetch(API_METRICS);
+                const data = await res.json();
+                
+                if (data.success) {
+                    logTerm.className = "log-terminal success";
+                    logTerm.innerText = `[OK] Resource statistics returned successfully:\n\n${JSON.stringify(data.metrics, null, 2)}`;
+                } else {
+                    logTerm.className = "log-terminal error";
+                    logTerm.innerText = `[ERROR] Not connected to local Docker.\nReason: ${data.error}`;
+                }
+            } catch (err) {
+                logTerm.className = "log-terminal error";
+                logTerm.innerText = `[CRITICAL] Not connected to local Docker.\nHTTP Query failed: ${err.message}`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            testConnection();
+        });
+    </script>
+</body>
+</html>

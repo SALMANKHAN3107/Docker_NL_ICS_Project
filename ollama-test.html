@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama Integration Diagnostics Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-color: #ff4b4b;
+            --accent-hover: #e03f3f;
+            --success-color: #10b981;
+            --error-color: #f43f5e;
+            --border-color: #334155;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            line-height: 1.5;
+            padding: 2rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1.5rem;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .card {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            border-bottom: 1px dashed var(--border-color);
+            padding-bottom: 0.5rem;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .status-badge.unknown {
+            background-color: #475569;
+            color: #cbd5e1;
+        }
+
+        .status-badge.online {
+            background-color: rgba(16, 185, 129, 0.15);
+            color: var(--success-color);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-badge.offline {
+            background-color: rgba(244, 63, 94, 0.15);
+            color: var(--error-color);
+            border: 1px solid rgba(244, 63, 94, 0.3);
+        }
+
+        .btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.25rem;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            outline: none;
+        }
+
+        .btn:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .btn:disabled {
+            background-color: #64748b;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        input[type="text"], textarea {
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-main);
+            padding: 0.75rem;
+            font-family: inherit;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input[type="text"]:focus, textarea:focus {
+            border-color: var(--accent-color);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 120px;
+        }
+
+        .meta-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            font-size: 0.85rem;
+        }
+
+        .meta-item {
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 1px solid #33415550;
+            padding-bottom: 0.5rem;
+        }
+
+        .meta-value {
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .log-terminal {
+            background-color: #020617;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            max-height: 250px;
+            overflow-y: auto;
+            color: #38bdf8;
+            margin-top: 1rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-terminal.error {
+            color: var(--error-color);
+            background-color: #4c051930;
+            border-color: #be123c50;
+        }
+
+        .log-terminal.success {
+            color: #34d399;
+            background-color: #064e3b30;
+            border-color: #04785750;
+        }
+
+        .models-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .model-chip {
+            background-color: #334155;
+            color: #e2e8f0;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .loading-spinner {
+            border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 50%;
+            border-top: 2px solid white;
+            width: 1rem;
+            height: 1rem;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🦙 Ollama Connection Diagnostics</h1>
+        <p class="subtitle">Diagnostic playground to verify direct loopback connection, active models, and execute raw prompt trials.</p>
+    </header>
+
+    <div class="grid">
+        <!-- Card 1: Connection Info -->
+        <div class="card">
+            <div class="card-title">
+                Connection Status
+                <span id="conn-badge" class="status-badge unknown">Unknown</span>
+            </div>
+            
+            <div class="meta-list">
+                <div class="meta-item">
+                    <span class="meta-label">Target URL:</span>
+                    <span id="meta-url" class="meta-value">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Active Model:</span>
+                    <span id="meta-model" class="meta-value">-</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Active Model Installed:</span>
+                    <span id="meta-model-check" class="meta-value">-</span>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; display: flex; gap: 0.75rem;">
+                <button id="btn-test" class="btn" onclick="testConnection()">
+                    Test Ollama Connection
+                </button>
+            </div>
+            
+            <div id="test-log" class="log-terminal" style="display: none;"></div>
+        </div>
+
+        <!-- Card 2: Installed Models -->
+        <div class="card">
+            <div class="card-title">System Models Catalog</div>
+            <p id="models-instructions" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+                No models loaded. Click "Test Ollama Connection" to query available instances.
+            </p>
+            <div id="models-list" class="models-container"></div>
+            
+            <div id="setup-help" style="display: none; margin-top: 1rem; padding: 1rem; background-color: #33415530; border-radius: 6px; font-size: 0.8rem; border: 1px solid #334155;">
+                <strong style="color: var(--accent-color);">💡 Instructions to Install Model:</strong>
+                <p style="margin-top: 0.25rem;">Ollama did not report the active model is installed. Please run this in your local terminal:</p>
+                <code style="display: block; background-color: #000; padding: 0.4rem; border-radius: 4px; font-family: monospace; margin-top: 0.4rem; color: #34d399;" id="pull-cmd">ollama pull llama3</code>
+            </div>
+        </div>
+    </div>
+
+    <!-- Integrated Query Playground -->
+    <div class="card" style="margin-bottom: 2rem;">
+        <div class="card-title">
+            Integrated Diagnostics Query Panel
+            <span id="query-mode-badge" class="status-badge unknown" style="display:none;">Direct Ollama</span>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+            This playground routes questions. If it detects Docker-related keywords (container, metrics, cpu, memory, health, logs, status, restarting, running, usage), it reads real telemetry from your local Docker Desktop to build the query context.
+        </p>
+
+        <!-- Test Examples Panel -->
+        <div style="margin-bottom: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem; border: 1px dashed var(--border-color); padding: 0.75rem; border-radius: 6px; background-color: rgba(255,255,255,0.02);">
+            <label style="display: block; width: 100%; margin-bottom: 0.25rem; font-size: 0.75rem;">Example Diagnostics Queries:</label>
+            <button class="btn secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="setQueryAndSubmit('Explain container metrics')">Explain container metrics</button>
+            <button class="btn secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="setQueryAndSubmit('Analyze unhealthy containers')">Analyze unhealthy containers</button>
+            <button class="btn secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="setQueryAndSubmit('Why is CPU high')">Why is CPU high</button>
+            <button class="btn secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="setQueryAndSubmit('Explain memory usage')">Explain memory usage</button>
+            <button class="btn secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="setQueryAndSubmit('Summarize running containers')">Summarize running containers</button>
+            <button class="btn secondary" style="padding: 0.35rem 0.75rem; font-size: 0.75rem;" onclick="setQueryAndSubmit('Hello, who are you?')">Direct Prompt Test (Non-Docker)</button>
+        </div>
+
+        <div class="form-group">
+            <label for="raw-prompt">Enter Query / Prompt:</label>
+            <textarea id="raw-prompt" placeholder="Type query (e.g. Explain how container resources function)..."></textarea>
+        </div>
+        <button id="btn-query" class="btn" onclick="sendRawQuery()">
+            Run Integrated Query
+        </button>
+
+        <div style="margin-top: 1.25rem;">
+            <label>Model Diagnostics Explanation Response:</label>
+            <div id="query-output" class="log-terminal" style="height: 250px; color: #34d399; font-family: 'Inter', sans-serif; white-space: pre-wrap;">System idling. Run an integrated query above to generate logs...</div>
+        </div>
+    </div>
+
+    <script>
+        const API_STATUS = "/api/ollama/status";
+        const API_TEST = "/api/ollama/test-connection";
+        const API_QUERY = "/api/ollama/query-raw";
+
+        async function fetchInitialStatus() {
+            try {
+                const res = await fetch(API_STATUS);
+                const data = await res.json();
+                
+                document.getElementById("meta-url").innerText = data.url;
+                document.getElementById("meta-model").innerText = data.model;
+                
+                document.getElementById("pull-cmd").innerText = `ollama pull ${data.model}`;
+            } catch (err) {
+                console.error("Failed to load initial status details:", err);
+            }
+        }
+
+        async function testConnection() {
+            const btn = document.getElementById("btn-test");
+            const badge = document.getElementById("conn-badge");
+            const logTerm = document.getElementById("test-log");
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span> Connecting...';
+            logTerm.style.display = "block";
+            logTerm.className = "log-terminal";
+            logTerm.innerText = "Initiating ping to Ollama backend...\nChecking socket connection on 127.0.0.1:11434...\n";
+            
+            badge.className = "status-badge unknown";
+            badge.innerText = "Testing...";
+
+            try {
+                const res = await fetch(API_TEST);
+                const data = await res.json();
+                
+                document.getElementById("meta-url").innerText = data.url;
+                document.getElementById("meta-model").innerText = data.activeModel;
+                document.getElementById("meta-model-check").innerText = data.modelExists ? "YES (Found)" : "NO (Missing)";
+                document.getElementById("meta-model-check").style.color = data.modelExists ? "var(--success-color)" : "var(--error-color)";
+                
+                // Render models list
+                const listDiv = document.getElementById("models-list");
+                listDiv.innerHTML = "";
+                if (data.models && data.models.length > 0) {
+                    document.getElementById("models-instructions").innerText = "Installed Models:";
+                    data.models.forEach(m => {
+                        const chip = document.createElement("span");
+                        chip.className = "model-chip";
+                        chip.innerText = m;
+                        listDiv.appendChild(chip);
+                    });
+                } else {
+                    document.getElementById("models-instructions").innerText = "No models installed on Ollama server.";
+                }
+
+                // Show instruction help if active model is missing
+                const helpDiv = document.getElementById("setup-help");
+                if (data.success && !data.modelExists) {
+                    helpDiv.style.display = "block";
+                } else {
+                    helpDiv.style.display = "none";
+                }
+
+                if (data.success) {
+                    badge.className = "status-badge online";
+                    badge.innerText = "Connected";
+                    
+                    if (data.testSuccess) {
+                        logTerm.className = "log-terminal success";
+                        logTerm.innerText = `[OK] Ollama responsive at ${data.url}\n[OK] Hello prompt roundtrip succeeded!\n\nResponse:\n"${data.testOutput}"`;
+                    } else {
+                        logTerm.className = "log-terminal error";
+                        logTerm.innerText = `[WARNING] Ollama reached, but prompt validation failed.\nError: ${data.testError}\n\nPlease check if your Ollama is running and has the model pulled.`;
+                    }
+                } else {
+                    badge.className = "status-badge offline";
+                    badge.innerText = "Error";
+                    logTerm.className = "log-terminal error";
+                    logTerm.innerText = `[ERROR] Could not connect to Ollama Server at ${data.url}\nDetails: ${data.error || "Connection refused"}\n\nMake sure 'ollama serve' is running in the background.`;
+                }
+            } catch (err) {
+                badge.className = "status-badge offline";
+                badge.innerText = "Offline";
+                logTerm.className = "log-terminal error";
+                logTerm.innerText = `[CRITICAL] Error communicating with Express gateway:\n${err.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Test Ollama Connection";
+            }
+        }
+
+        function setQueryAndSubmit(text) {
+            document.getElementById("raw-prompt").value = text;
+            sendRawQuery();
+        }
+
+        async function sendRawQuery() {
+            const promptInput = document.getElementById("raw-prompt");
+            const btn = document.getElementById("btn-query");
+            const outBox = document.getElementById("query-output");
+            const modeBadge = document.getElementById("query-mode-badge");
+            
+            const prompt = promptInput.value.trim();
+            if (!prompt) return;
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading-spinner"></span> Querying...';
+            outBox.className = "log-terminal";
+            outBox.innerText = `Processing query routing...\nDetecting context rules...\nWaiting for response from local Ollama model (approx. 5-20s)...`;
+            
+            modeBadge.style.display = "none";
+
+            try {
+                const res = await fetch(API_QUERY, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ prompt })
+                });
+                
+                const data = await res.json();
+                
+                if (data.success) {
+                    outBox.className = "log-terminal success";
+                    outBox.innerText = data.response;
+                    
+                    modeBadge.style.display = "inline-flex";
+                    if (data.dockerContextTriggered) {
+                        modeBadge.className = "status-badge online";
+                        modeBadge.innerText = "Docker Context Injected";
+                    } else {
+                        modeBadge.className = "status-badge unknown";
+                        modeBadge.innerText = "Direct Prompt (No Context)";
+                    }
+                } else {
+                    outBox.className = "log-terminal error";
+                    outBox.innerText = `[ERROR] Integrated Execution Failed:\n${data.error}`;
+                }
+            } catch (err) {
+                outBox.className = "log-terminal error";
+                outBox.innerText = `[CRITICAL] Connection Gateway Failure:\n${err.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Run Integrated Query";
+            }
+        }
+
+        // Initialize status details
+        fetchInitialStatus();
+    </script>
+</body>
+</html>

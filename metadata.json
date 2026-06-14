@@ -1,0 +1,6 @@
+{
+  "name": "Docker Health Dashboard",
+  "description": "AI-powered Docker monitoring dashboard with natural language translation, agent investigation loops, and diagnostic feedback.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
