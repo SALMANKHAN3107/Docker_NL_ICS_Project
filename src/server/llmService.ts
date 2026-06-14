@@ -195,7 +195,13 @@ export class LLMService {
     The execution result from the Docker daemon is:
     ${JSON.stringify(result, null, 2)}
 
-    Generate a brief, clear explanation of the action outcome. State if the action was successful. Keep the output very concise.`;
+    Generate a brief, clear explanation of the action outcome. State if the action was successful.
+    
+    Follow these rules strictly:
+    1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
+    2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
+    3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
+    4. Stay focused and answer only the query. Avoid repetition, filler, extra explanation, or generic statements.`;
 
     try {
       return await this.callOllama(prompt, false);
@@ -206,18 +212,20 @@ export class LLMService {
   }
 
   /**
-   * Type 2: Generate Retrieval Summary (Max 60 words)
+   * Type 2: Generate Retrieval Summary (60 to 120 words)
    */
   static async generateRetrievalSummary(containers: any[]): Promise<string> {
     const prompt = `Synthesize a concise status summary of the following containers:
     ${JSON.stringify(containers, null, 2)}
 
     Follow these rules strictly:
-    1. The summary MUST be short and under 60 words. Maximum: 60 words.
-    2. Mention the specific container names, their status (e.g. running, exited), and metrics (CPU and Memory).
-    3. Do NOT mention health check, health status, or health metrics.
-    4. Do NOT repeat any phrases, words, or facts.
-    5. Do NOT use markdown tables, list formats, or section headers. Output plain text only.`;
+    1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
+    2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
+    3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
+    4. Mention specific container names, their status (e.g. running, exited), and metrics (CPU and Memory).
+    5. Do NOT mention health check, health status, or health metrics.
+    6. Do NOT repeat any phrases, words, or facts.
+    7. Do NOT use markdown tables, list formats, or section headers. Output plain text only.`;
 
     try {
       return await this.callOllama(prompt, false);
@@ -235,10 +243,12 @@ export class LLMService {
     const prompt = `Explain the recent logs for container "${containerName}":
     ${logsSnippet}
 
-    Rules:
-    1. Provide a short explanation of what the logs indicate.
-    2. Identify if there are any error messages or exceptions.
-    3. Write no more than 75 words.`;
+    Follow these rules strictly:
+    1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
+    2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
+    3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
+    4. Provide a clear explanation of what the logs indicate and identify if there are any error messages or exceptions.
+    5. Stay focused and answer only the query. Avoid repetition, filler, or generic statements.`;
 
     try {
       return await this.callOllama(prompt, false);
@@ -249,19 +259,21 @@ export class LLMService {
   }
 
   /**
-   * Type 4: Generate Reasoning Summary (Max 80 words)
+   * Type 4: Generate Reasoning Summary (60 to 120 words)
    */
   static async generateReasoningSummary(query: string, containers: any[]): Promise<string> {
     const prompt = `Analyze the user query: "${query}"
     Based on the following container states and metrics:
     ${JSON.stringify(containers, null, 2)}
 
-    Rules:
-    1. Conduct reasoning and diagnosis to answer the user query.
-    2. Highlight any metric anomalies (like high CPU or memory pressure). Never mention health check or health status.
-    3. Write a summary of no more than 60 words. Maximum: 60 words.
-    4. Mention container names, status, and metrics.
-    5. Do not repeat words or sentences.`;
+    Follow these rules strictly:
+    1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
+    2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
+    3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
+    4. Conduct reasoning and diagnosis to answer the user query.
+    5. Highlight any metric anomalies (like high CPU or memory pressure). Never mention health check or health status.
+    6. Mention container names, status, and metrics.
+    7. Do not repeat words or sentences.`;
 
     try {
       return await this.callOllama(prompt, false);
