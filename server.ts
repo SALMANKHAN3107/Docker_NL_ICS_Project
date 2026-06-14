@@ -16,8 +16,16 @@ import { LLMService } from "./src/server/llmService.js";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const getFilename = () => {
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.url) {
+      return fileURLToPath(import.meta.url);
+    }
+  } catch (e) {}
+  return typeof __filename !== "undefined" ? __filename : "";
+};
+const __filename = getFilename();
+const __dirname = typeof __dirname !== "undefined" ? __dirname : path.dirname(__filename);
 
 async function startServer() {
   const app = express();
