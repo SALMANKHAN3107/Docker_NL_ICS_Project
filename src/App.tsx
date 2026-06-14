@@ -385,7 +385,7 @@ const getDynamicInsights = (text: string, containers: any[]): DynamicInsights =>
       rootCause: cause,
       supportingObservations: exitedContainers.length > 0 ? ["Exit state detected", "Resource usage normal", "No active container stats"] : ["Telemetry states optimal", "Active sockets connected"],
       possibleCauses,
-      humanSummary: text.substring(0, 200) + "...",
+      humanSummary: text,
       containerAnalysis: containers.map(c => ({
         container: c.name,
         state: c.status,
