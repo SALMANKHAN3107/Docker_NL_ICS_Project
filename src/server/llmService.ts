@@ -195,13 +195,12 @@ export class LLMService {
     The execution result from the Docker daemon is:
     ${JSON.stringify(result, null, 2)}
 
-    Generate a brief, clear explanation of the action outcome. State if the action was successful.
-    
     Follow these rules strictly:
     1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
     2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
     3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
-    4. Stay focused and answer only the query. Avoid repetition, filler, extra explanation, or generic statements.`;
+    4. Provide a detailed explanation of the action outcome. Confirm if the action succeeded or failed, describe what change was applied to the container, and provide advice on the next steps (e.g. verifying container logs or checking its resource utilization).
+    5. Stay focused and answer only the query. Avoid repetition, filler, or generic statements.`;
 
     try {
       return await this.callOllama(prompt, false);
@@ -215,17 +214,18 @@ export class LLMService {
    * Type 2: Generate Retrieval Summary (60 to 120 words)
    */
   static async generateRetrievalSummary(containers: any[]): Promise<string> {
-    const prompt = `Synthesize a concise status summary of the following containers:
+    const prompt = `Provide a detailed status report of the following containers:
     ${JSON.stringify(containers, null, 2)}
 
     Follow these rules strictly:
     1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
     2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
     3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
-    4. Mention specific container names, their status (e.g. running, exited), and metrics (CPU and Memory).
-    5. Do NOT mention health check, health status, or health metrics.
-    6. Do NOT repeat any phrases, words, or facts.
-    7. Do NOT use markdown tables, list formats, or section headers. Output plain text only.`;
+    4. For each container in the list, state its exact name, current execution status (e.g. running, exited, or stopped), its exact image, its uptime or exit code description, CPU usage, and memory utilization.
+    5. Summarize the overall environment health based on the ratio of running to exited containers. Suggest next-step troubleshooting actions (like checking logs or restarting) if there are exited containers.
+    6. Do NOT mention health check, health status, or health metrics.
+    7. Do NOT repeat any phrases, words, or facts.
+    8. Do NOT use markdown tables, list formats, or section headers. Output plain text only.`;
 
     try {
       return await this.callOllama(prompt, false);
@@ -247,8 +247,9 @@ export class LLMService {
     1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
     2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
     3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
-    4. Provide a clear explanation of what the logs indicate and identify if there are any error messages or exceptions.
-    5. Stay focused and answer only the query. Avoid repetition, filler, or generic statements.`;
+    4. Provide a clear and detailed explanation of what the logs indicate, identify any specific error messages, warnings, or exceptions, and explain their possible root cause.
+    5. Provide actionable next steps or recommendations to resolve any issues found in the logs.
+    6. Stay focused and answer only the query. Avoid repetition, filler, or generic statements.`;
 
     try {
       return await this.callOllama(prompt, false);
@@ -270,10 +271,11 @@ export class LLMService {
     1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
     2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
     3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
-    4. Conduct reasoning and diagnosis to answer the user query.
-    5. Highlight any metric anomalies (like high CPU or memory pressure). Never mention health check or health status.
-    6. Mention container names, status, and metrics.
-    7. Do not repeat words or sentences.`;
+    4. Conduct thorough reasoning and diagnosis to address the user's query. Describe the status of each relevant container (name, status, CPU, and memory details).
+    5. Highlight any metric anomalies (like high CPU, memory pressure, or unexpected exited states), explain the potential root causes, and provide recommended troubleshooting steps or optimization actions.
+    6. Do NOT mention health check, health status, or health metrics.
+    7. Do not repeat words or sentences.
+    8. Do NOT use markdown tables, list formats, or section headers. Output plain text only.`;
 
     try {
       return await this.callOllama(prompt, false);
