@@ -460,79 +460,124 @@ export default function App() {
   // Connection Setup States
   const [selectedOS, setSelectedOS] = useState<'windows' | 'mac' | 'linux'>('windows');
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectorUrl, setConnectorUrl] = useState<string>("http://127.0.0.1:43210");
-  const [isConnectingConnector, setIsConnectingConnector] = useState<boolean>(false);
+  const [connectorOnline, setConnectorOnline] = useState<boolean>(false);
+  const [lastSync, setLastSync] = useState<string>("Never");
+  const [connectionStage, setConnectionStage] = useState<'disconnected' | 'connecting' | 'docker_connected' | 'ollama_connected' | 'ready'>('disconnected');
+
+  // Background connector polling and visual status stage transition
+  useEffect(() => {
+    let active = true;
+    let transitionTimer: NodeJS.Timeout | null = null;
+
+    const checkStatus = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:43210/api/health");
+        const data = await res.json();
+        if (!active) return;
+
+        if (data.success) {
+          setConnectorOnline(true);
+          setDockerConnected(data.dockerConnected);
+          setOllamaConnected(data.ollamaConnected);
+          setLastSync(new Date(data.timestamp).toLocaleTimeString());
+
+          setConnectionStage(prev => {
+            if (prev === 'disconnected') {
+              transitionTimer = setTimeout(() => {
+                if (!active) return;
+                setConnectionStage(s => {
+                  if (s === 'connecting') {
+                    if (data.dockerConnected) {
+                      transitionTimer = setTimeout(() => {
+                        if (!active) return;
+                        setConnectionStage(s2 => {
+                          if (s2 === 'docker_connected') {
+                            if (data.ollamaConnected) {
+                              transitionTimer = setTimeout(() => {
+                                if (!active) return;
+                                setConnectionStage(s3 => {
+                                  if (s3 === 'ollama_connected') {
+                                    setIsConnected(true);
+                                    return 'ready';
+                                  }
+                                  return s3;
+                                });
+                              }, 800);
+                              return 'ollama_connected';
+                            } else {
+                              return 'docker_connected';
+                            }
+                          }
+                          return s2;
+                        });
+                      }, 800);
+                      return 'docker_connected';
+                    } else {
+                      return 'connecting';
+                    }
+                  }
+                  return s;
+                });
+              }, 800);
+              return 'connecting';
+            } else if (prev === 'ready') {
+              if (!data.dockerConnected || !data.ollamaConnected) {
+                setIsConnected(false);
+                return !data.dockerConnected ? 'connecting' : 'docker_connected';
+              }
+              return 'ready';
+            } else {
+              if (!data.dockerConnected) {
+                setIsConnected(false);
+                return 'connecting';
+              }
+              if (!data.ollamaConnected) {
+                setIsConnected(false);
+                return 'docker_connected';
+              }
+              if (prev === 'docker_connected' && data.ollamaConnected) {
+                return 'ollama_connected';
+              }
+              if (prev === 'ollama_connected') {
+                setIsConnected(true);
+                return 'ready';
+              }
+              return prev;
+            }
+          });
+        } else {
+          setConnectorOnline(false);
+          setIsConnected(false);
+          setConnectionStage('disconnected');
+        }
+      } catch (err) {
+        if (!active) return;
+        setConnectorOnline(false);
+        setIsConnected(false);
+        setDockerConnected(false);
+        setOllamaConnected(false);
+        setConnectionStage('disconnected');
+      }
+    };
+
+    checkStatus();
+    const interval = setInterval(checkStatus, 2000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      if (transitionTimer) clearTimeout(transitionTimer);
+    };
+  }, []);
 
   const apiFetch = async (path: string, options?: RequestInit) => {
     if (!isConnected && path !== "/api/health") {
-      throw new Error("Local environment is not connected. Use the sidebar connection buttons.");
+      throw new Error("Local environment is not connected. Run the generated command to start the launcher.");
     }
     const baseUrl = connectorUrl;
     const response = await fetch(`${baseUrl}${path}`, options);
     return response;
-  };
-
-  const handleConnectDocker = async () => {
-    setIsConnectingConnector(true);
-    setConnectionError(null);
-    try {
-      const res = await fetch(`${connectorUrl}/api/health`);
-      const data = await res.json();
-      if (data.success) {
-        setIsConnected(true);
-        setDockerConnected(data.dockerConnected);
-        setOllamaConnected(data.ollamaConnected);
-        if (!data.dockerConnected) {
-          setConnectionError("Local connector active, but Docker Desktop is not running.");
-        } else {
-          // Trigger immediate state reload
-          setTimeout(() => {
-            fetchDockerState();
-            fetchOllamaStatus();
-            fetchDockerConfig();
-          }, 100);
-        }
-      }
-    } catch (err: any) {
-      setIsConnected(false);
-      setDockerConnected(false);
-      setOllamaConnected(false);
-      setConnectionError("Could not reach local connector. Ensure 'node local-connector.js' is running.");
-    } finally {
-      setIsConnectingConnector(false);
-    }
-  };
-
-  const handleConnectOllama = async () => {
-    setIsConnectingConnector(true);
-    setConnectionError(null);
-    try {
-      const res = await fetch(`${connectorUrl}/api/health`);
-      const data = await res.json();
-      if (data.success) {
-        setIsConnected(true);
-        setDockerConnected(data.dockerConnected);
-        setOllamaConnected(data.ollamaConnected);
-        if (!data.ollamaConnected) {
-          setConnectionError("Local connector active, but Ollama service is not running.");
-        } else {
-          // Trigger immediate state reload
-          setTimeout(() => {
-            fetchDockerState();
-            fetchOllamaStatus();
-            fetchDockerConfig();
-          }, 100);
-        }
-      }
-    } catch (err: any) {
-      setIsConnected(false);
-      setDockerConnected(false);
-      setOllamaConnected(false);
-      setConnectionError("Could not reach local connector. Ensure 'node local-connector.js' is running.");
-    } finally {
-      setIsConnectingConnector(false);
-    }
   };
 
   const fetchDockerConfig = async () => {
@@ -1044,11 +1089,18 @@ Rules:
           {/* Connection Setup Panel */}
           <div className="bg-white rounded-lg border border-[#e6e9ef] p-4 flex flex-col gap-3.5 mb-2 shadow-2xs">
             <div className="flex items-center justify-between">
-              <span className="font-bold text-xs text-slate-800 uppercase tracking-wider">Local Setup</span>
+              <span className="font-bold text-xs text-slate-800 uppercase tracking-wider">Connect Local Environment</span>
               <div className="flex items-center gap-1">
-                <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${
+                  connectionStage === 'ready' ? "bg-emerald-500 animate-pulse" :
+                  connectionStage === 'disconnected' ? "bg-slate-400" : "bg-amber-500 animate-pulse"
+                }`} />
                 <span className="text-[10px] font-bold text-slate-500 uppercase">
-                  {isConnected ? "Connected" : "Disconnected"}
+                  {connectionStage === 'ready' ? "Ready" :
+                   connectionStage === 'disconnected' ? "Disconnected" :
+                   connectionStage === 'connecting' ? "Connecting" :
+                   connectionStage === 'docker_connected' ? "Docker Connected" :
+                   connectionStage === 'ollama_connected' ? "Ollama Connected" : "Connecting"}
                 </span>
               </div>
             </div>
@@ -1070,72 +1122,83 @@ Rules:
               </div>
             </div>
 
-            {/* Local Connector Instructions */}
-            <div className="bg-slate-50 rounded border border-slate-200 p-2 flex flex-col gap-1">
-              <span className="text-[10px] font-bold text-slate-700">1. Run Local Connector</span>
-              <code className="bg-slate-900 text-slate-300 p-1.5 rounded font-mono text-[9px] break-all select-all">
-                node local-connector.js
-              </code>
-            </div>
-
-            {/* Connect Docker Area */}
-            <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-slate-700">2. Docker Engine</span>
-                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${dockerConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-                  {dockerConnected ? "Active" : "Offline"}
-                </span>
+            {/* Website generates ONE command */}
+            <div className="bg-slate-50 rounded border border-slate-200 p-3 flex flex-col gap-2">
+              <span className="text-[10.5px] font-bold text-slate-700">Run in your Terminal:</span>
+              <div className="relative">
+                <code className="block bg-slate-900 text-slate-300 p-2.5 pr-8 rounded font-mono text-[9px] break-all select-all leading-normal">
+                  {selectedOS === 'windows' && `powershell -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; iex (New-Object System.Net.WebClient).DownloadString('${window.location.origin}/launcher.ps1')"`}
+                  {(selectedOS === 'mac' || selectedOS === 'linux') && `curl -fsSL ${window.location.origin}/launcher.sh | bash`}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cmd = selectedOS === 'windows' 
+                      ? `powershell -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; iex (New-Object System.Net.WebClient).DownloadString('${window.location.origin}/launcher.ps1')"`
+                      : `curl -fsSL ${window.location.origin}/launcher.sh | bash`;
+                    navigator.clipboard.writeText(cmd);
+                  }}
+                  className="absolute right-1.5 top-1.5 p-1 bg-slate-800 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  title="Copy command"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                </button>
               </div>
-              {!dockerConnected && (
-                <div className="bg-slate-50 rounded border border-slate-200 p-2 text-[9px] font-mono text-slate-655 leading-normal">
-                  <span>Start command:</span>
-                  <code className="block bg-slate-900 text-slate-300 p-1 rounded font-mono text-[9px] mt-1 break-all select-all">
-                    {selectedOS === 'windows' && `Start-Process "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"`}
-                    {selectedOS === 'mac' && `open -a Docker`}
-                    {selectedOS === 'linux' && `sudo systemctl start docker`}
-                  </code>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={handleConnectDocker}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] py-1.5 rounded transition-colors cursor-pointer text-center"
-              >
-                Connect Docker
-              </button>
             </div>
 
-            {/* Connect Ollama Area */}
-            <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-slate-700">3. Ollama (Model)</span>
-                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${ollamaConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-                  {ollamaConnected ? "Active" : "Offline"}
-                </span>
+            {/* Live indicators */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col gap-2">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Live Status Indicators</span>
+              
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-white border border-slate-100 rounded p-2 flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-450 uppercase">Connector</span>
+                  <span className={`font-extrabold text-[10px] flex items-center gap-1 ${connectorOnline ? "text-emerald-600" : "text-slate-400"}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${connectorOnline ? "bg-emerald-500 animate-pulse" : "bg-slate-300"}`} />
+                    {connectorOnline ? "Online" : "Offline"}
+                  </span>
+                </div>
+                
+                <div className="bg-white border border-slate-100 rounded p-2 flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-450 uppercase">Docker</span>
+                  <span className={`font-extrabold text-[10px] flex items-center gap-1 ${dockerConnected ? "text-emerald-600" : "text-rose-650"}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${dockerConnected ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    {dockerConnected ? "Connected" : "Offline"}
+                  </span>
+                </div>
+
+                <div className="bg-white border border-slate-100 rounded p-2 flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-450 uppercase">Ollama</span>
+                  <span className={`font-extrabold text-[10px] flex items-center gap-1 ${ollamaConnected ? "text-emerald-600" : "text-rose-650"}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${ollamaConnected ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    {ollamaConnected ? "Connected" : "Offline"}
+                  </span>
+                </div>
+
+                <div className="bg-white border border-slate-100 rounded p-2 flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-slate-450 uppercase">Last Sync</span>
+                  <span className="font-semibold text-slate-700 text-[10px]">
+                    {lastSync}
+                  </span>
+                </div>
               </div>
-              {!ollamaConnected && (
-                <div className="bg-slate-50 rounded border border-slate-200 p-2 text-[9px] font-mono text-slate-655 leading-normal flex flex-col gap-1">
-                  <span>Commands:</span>
-                  <code className="bg-slate-900 text-slate-300 p-1 rounded font-mono text-[9px] break-all select-all">
-                    ollama serve
-                  </code>
-                  <code className="bg-slate-900 text-slate-300 p-1 rounded font-mono text-[9px] break-all select-all">
-                    ollama run llama3
-                  </code>
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={handleConnectOllama}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] py-1.5 rounded transition-colors cursor-pointer text-center"
-              >
-                Connect Ollama
-              </button>
             </div>
 
-            {connectionError && (
-              <div className="text-[10px] text-rose-600 bg-rose-50 border border-rose-100 p-2 rounded leading-normal">
-                ⚠️ {connectionError}
+            {/* Conditional missing dependencies advice */}
+            {connectorOnline && !dockerConnected && (
+              <div className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200 p-2.5 rounded-lg leading-relaxed shadow-3xs">
+                <span className="font-bold block mb-1">🐳 Docker Desktop Offline</span>
+                Please start Docker Desktop on your machine. If not installed, download it from <a href="https://www.docker.com/products/docker-desktop" target="_blank" rel="noreferrer" className="text-blue-600 underline font-bold">docker.com</a>.
+              </div>
+            )}
+
+            {connectorOnline && !ollamaConnected && (
+              <div className="text-[10px] text-amber-805 bg-amber-50 border border-amber-200 p-2.5 rounded-lg leading-relaxed shadow-3xs">
+                <span className="font-bold block mb-1">🦙 Ollama Offline / Model Missing</span>
+                Ensure Ollama is running locally, then pull the required model:
+                <code className="block bg-slate-900 text-slate-300 p-1.5 rounded font-mono text-[9px] mt-1 break-all select-all">
+                  ollama run llama3
+                </code>
               </div>
             )}
           </div>
@@ -1480,17 +1543,17 @@ Rules:
               <form onSubmit={(e) => { e.preventDefault(); executeDiagnosticQuery(queryInput); }} className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Describe your issue (e.g. 'Show unhealthy containers', 'Explain core auth-api uptime logs', 'Check container resource levels')..."
+                  placeholder={isConnected ? "Describe your issue (e.g. 'Show unhealthy containers', 'Explain core auth-api uptime logs')..." : "Please connect your local environment using the command on the left to start."}
                   value={queryInput}
                   onChange={(e) => setQueryInput(e.target.value)}
-                  disabled={isAgentRunning}
-                  className="flex-1 bg-white border border-gray-300 outline-hidden focus:border-red-500 rounded-lg px-3.5 py-2 text-xs transition-all shadow-inner"
+                  disabled={isAgentRunning || !isConnected}
+                  className="flex-1 bg-white border border-gray-300 outline-hidden focus:border-red-500 rounded-lg px-3.5 py-2 text-xs transition-all shadow-inner disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                   id="query-bar-input"
                 />
                 <button
                   type="submit"
-                  disabled={isAgentRunning || !queryInput.trim()}
-                  className="bg-red-500 hover:bg-red-650 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:bg-gray-200 disabled:cursor-not-allowed select-none cursor-pointer uppercase tracking-wider"
+                  disabled={isAgentRunning || !queryInput.trim() || !isConnected}
+                  className="bg-red-500 hover:bg-red-650 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 disabled:bg-gray-200 disabled:text-gray-450 disabled:cursor-not-allowed select-none cursor-pointer uppercase tracking-wider"
                 >
                   {isAgentRunning ? (
                     <>
@@ -1505,7 +1568,7 @@ Rules:
                   )}
                 </button>
               </form>
-
+ 
               {/* Reduced preset indicators to exactly 4 distinct testing targets */}
               <div className="flex flex-col gap-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
                 <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1">
@@ -1520,7 +1583,8 @@ Rules:
                         setQueryInput(q);
                         executeDiagnosticQuery(q);
                       }}
-                      className="text-[11px] bg-white text-slate-600 hover:text-red-500 hover:border-red-500 border border-gray-200 px-3 py-1.5 rounded transition-all cursor-pointer font-medium shadow-3xs"
+                      disabled={!isConnected}
+                      className="text-[11px] bg-white text-slate-655 hover:text-red-500 hover:border-red-500 border border-gray-200 px-3 py-1.5 rounded transition-all cursor-pointer font-medium shadow-3xs disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {q}
                     </button>
@@ -1943,7 +2007,19 @@ Rules:
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#e6e9ef] text-slate-700">
-                      {filteredContainers.length === 0 ? (
+                      {!isConnected ? (
+                        <tr>
+                          <td colSpan={4} className="text-center p-12 text-slate-500">
+                            <div className="flex flex-col items-center justify-center gap-2">
+                              <span className="font-bold text-sm text-slate-755">⚠️ Local Environment Disconnected</span>
+                              <span className="text-[11px] text-slate-450 font-medium max-w-md leading-relaxed">
+                                Please copy and run the generated command for your OS from the sidebar inside your terminal. 
+                                The dashboard will connect and display your container profiles automatically once the launcher starts.
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : filteredContainers.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="text-center p-8 text-gray-400">
                             No container profiles found. Try clearing filters.
@@ -2400,7 +2476,7 @@ Rules:
                     {activeTerminalContainer.status !== "running" ? (
                       <button
                         onClick={() => handleContainerControl(activeTerminalContainer.name, "start")}
-                        disabled={!!actionInProgress[activeTerminalContainer.name]}
+                        disabled={!!actionInProgress[activeTerminalContainer.name] || !isConnected}
                         className="bg-emerald-650 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         {actionInProgress[activeTerminalContainer.name] === "start" ? (
@@ -2413,7 +2489,7 @@ Rules:
                     ) : (
                       <button
                         onClick={() => handleContainerControl(activeTerminalContainer.name, "stop")}
-                        disabled={!!actionInProgress[activeTerminalContainer.name]}
+                        disabled={!!actionInProgress[activeTerminalContainer.name] || !isConnected}
                         className="bg-rose-650 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         {actionInProgress[activeTerminalContainer.name] === "stop" ? (
@@ -2427,7 +2503,7 @@ Rules:
 
                     <button
                       onClick={() => handleContainerControl(activeTerminalContainer.name, "restart")}
-                      disabled={!!actionInProgress[activeTerminalContainer.name] || activeTerminalContainer.status !== "running"}
+                      disabled={!!actionInProgress[activeTerminalContainer.name] || activeTerminalContainer.status !== "running" || !isConnected}
                       className="bg-amber-600 hover:bg-amber-700 disabled:bg-slate-800 disabled:text-slate-550 text-white font-bold px-4 py-2 rounded text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
                       {actionInProgress[activeTerminalContainer.name] === "restart" ? (

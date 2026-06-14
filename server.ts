@@ -45,6 +45,23 @@ async function startServer() {
     });
   });
 
+  // Endpoints to serve the launcher scripts and bundled connector files
+  app.get("/launcher.ps1", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "launcher.ps1"));
+  });
+
+  app.get("/launcher.sh", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "launcher.sh"));
+  });
+
+  app.get("/local-connector.js", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "dist", "local-connector-bundle.js"));
+  });
+
+  app.get("/package.json", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "package.json"));
+  });
+
   // 2. Fetch full Docker state (metrics, states, health, lists)
   app.get("/api/docker/state", async (req, res) => {
     try {
