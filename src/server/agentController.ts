@@ -24,6 +24,47 @@ export interface AgentResult {
   matchedContainerNames?: string[];
 }
 
+export function classifyContainerHealth(c: any): 'healthy' | 'unhealthy' {
+  const status = (c.status || '').toLowerCase();
+  const health = (c.health || '').toLowerCase();
+  const restartCount = c.restartCount || 0;
+  
+  let cpuVal = 0;
+  if (typeof c.cpu === 'string') {
+    cpuVal = parseFloat(c.cpu.replace('%', '')) || 0;
+  } else if (typeof c.cpu === 'number') {
+    cpuVal = c.cpu;
+  }
+  
+  let memPercent = 0;
+  if (typeof c.memoryUsagePercentage === 'string') {
+    memPercent = parseFloat(c.memoryUsagePercentage.replace('%', '')) || 0;
+  } else if (c.memory && c.memoryLimit) {
+    memPercent = (c.memory / c.memoryLimit) * 100;
+  } else if (typeof c.memory === 'string') {
+    const parts = c.memory.split('/');
+    if (parts.length === 2) {
+      const usage = parseFloat(parts[0].replace(/[^\d.]/g, '')) || 0;
+      const limit = parseFloat(parts[1].replace(/[^\d.]/g, '')) || 0;
+      if (limit > 0) memPercent = (usage / limit) * 100;
+    }
+  }
+
+  // Healthy if status is running, no restart loop, normal CPU/Memory (<= 90%), and not unhealthy
+  const isUnhealthy = 
+    status.includes('exit') || 
+    status.includes('stop') ||
+    status.includes('restart') || 
+    status.includes('dead') || 
+    status.includes('pause') ||
+    health === 'unhealthy' ||
+    restartCount > 2 ||
+    cpuVal > 90 || 
+    memPercent > 90;
+
+  return isUnhealthy ? 'unhealthy' : 'healthy';
+}
+
 export class AgentController {
   // Simple static storage for mutating action confirmations
   private static pendingAction: { action: 'start' | 'stop' | 'restart'; containerName: string } | null = null;
@@ -55,7 +96,32 @@ export class AgentController {
         return defaultErrorResult(`Configured Ollama model '${activeModel}' is not downloaded.`);
       }
 
+      const containers = await DockerExecutor.getStatus();
+      const unhealthyContainers = containers.filter(c => classifyContainerHealth(c) === 'unhealthy');
+      const healthyContainers = containers.filter(c => classifyContainerHealth(c) === 'healthy');
+
       const lowerQuery = query.trim().toLowerCase();
+      const isQueryingUnhealthy = lowerQuery.includes("unhealthy") || lowerQuery.includes("failed") || lowerQuery.includes("non-running") || lowerQuery.includes("exited") || lowerQuery.includes("stopped");
+      const isQueryingHealthy = lowerQuery.includes("healthy") || lowerQuery.includes("running");
+
+      // Rule: If no unhealthy containers, directly return static summary
+      if (isQueryingUnhealthy && unhealthyContainers.length === 0) {
+        return {
+          query,
+          initialIntent: { intent: "reasoning", target: "unhealthy containers", reasoning: "Environment clean: no unhealthy containers detected." },
+          steps: [
+            {
+              loopNumber: 1,
+              action: "stats",
+              thoughts: "Inspecting host system and container list for issues.",
+              observation: { count: 0 }
+            }
+          ],
+          commentary: "No unhealthy containers detected with ai summary. All active containers appear stable.",
+          containersAtEnd: []
+        };
+      }
+
       const isConfirmation = ["yes", "proceed", "confirm", "y", "go ahead"].includes(lowerQuery);
 
       // Check if we have a pending action and the user is confirming it
@@ -107,8 +173,6 @@ export class AgentController {
       }
       const parsedIntent = await LLMService.translate(processedQuery);
       console.log(`[AgentController] Parsed intent: ${JSON.stringify(parsedIntent)}`);
-
-      const containers = await DockerExecutor.getStatus();
 
       // Identify if any specific containers are mentioned/matched in the query
       const matchedContainerNames = new Set<string>();
@@ -178,13 +242,17 @@ export class AgentController {
         let filteredContainers = containers;
         const filter = parsedIntent.filter;
 
-        if (filter === 'running') {
+        if (isQueryingUnhealthy) {
+          filteredContainers = unhealthyContainers;
+        } else if (isQueryingHealthy) {
+          filteredContainers = healthyContainers;
+        } else if (filter === 'running') {
           filteredContainers = containers.filter(c => c.status === 'running');
-        } else if (filter === 'exited' || filter === 'stopped') {
+        } else if (filter === 'exited' || (filter as string) === 'stopped') {
           filteredContainers = containers.filter(c => c.status !== 'running');
         } else {
           // Manual check for query content filter
-          if (lowerQuery.includes("exited") || lowerQuery.includes("stopped") || lowerQuery.includes("non-running") || lowerQuery.includes("unhealthy")) {
+          if (lowerQuery.includes("exited") || lowerQuery.includes("stopped") || lowerQuery.includes("non-running")) {
             filteredContainers = containers.filter(c => c.status !== 'running');
           } else if (lowerQuery.includes("running")) {
             filteredContainers = containers.filter(c => c.status === 'running');
@@ -198,8 +266,9 @@ export class AgentController {
           );
         }
 
-        // Generate retrieval summary
-        const summary = await LLMService.generateRetrievalSummary(filteredContainers);
+        // Generate retrieval summary using healthType category
+        const healthType = isQueryingHealthy ? 'healthy' : isQueryingUnhealthy ? 'unhealthy' : 'all';
+        const summary = await LLMService.generateRetrievalSummary(filteredContainers, healthType);
 
         return {
           query,
@@ -265,14 +334,21 @@ export class AgentController {
 
       if (parsedIntent.intent === 'reasoning') {
         let filteredContainers = containers;
+        if (isQueryingUnhealthy) {
+          filteredContainers = unhealthyContainers;
+        } else if (isQueryingHealthy) {
+          filteredContainers = healthyContainers;
+        }
+
         if (matchedContainers.length > 0) {
-          filteredContainers = containers.filter(c =>
+          filteredContainers = filteredContainers.filter(c =>
             matchedContainers.some(mc => mc.name.toLowerCase() === c.name.toLowerCase())
           );
         }
 
-        // Generate reasoning summary
-        const summary = await LLMService.generateReasoningSummary(query, filteredContainers);
+        // Generate reasoning summary using healthType category
+        const healthType = isQueryingHealthy ? 'healthy' : isQueryingUnhealthy ? 'unhealthy' : 'all';
+        const summary = await LLMService.generateReasoningSummary(query, filteredContainers, healthType);
 
         return {
           query,
@@ -293,12 +369,18 @@ export class AgentController {
 
       // Default to general reasoning status
       let finalContainers = containers;
+      if (isQueryingUnhealthy) {
+        finalContainers = unhealthyContainers;
+      } else if (isQueryingHealthy) {
+        finalContainers = healthyContainers;
+      }
       if (matchedContainers.length > 0) {
-        finalContainers = containers.filter(c =>
+        finalContainers = finalContainers.filter(c =>
           matchedContainers.some(mc => mc.name.toLowerCase() === c.name.toLowerCase())
         );
       }
-      const defaultSummary = await LLMService.generateReasoningSummary(query, finalContainers);
+      const healthType = isQueryingHealthy ? 'healthy' : isQueryingUnhealthy ? 'unhealthy' : 'all';
+      const defaultSummary = await LLMService.generateReasoningSummary(query, finalContainers, healthType);
       return {
         query,
         initialIntent: parsedIntent,

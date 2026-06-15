@@ -680,6 +680,51 @@ export default function App() {
     if (!isConnected) return;
     setActionInProgress(prev => ({ ...prev, [containerName]: action }));
     setControlError(null);
+
+    // Immediately set UI state to reflect intermediate status for counts and tables
+    const intermediateStatus = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
+    setContainers(prev => prev.map(c => {
+      if (c.name === containerName) {
+        return { ...c, status: intermediateStatus };
+      }
+      return c;
+    }));
+
+    let isActionDone = false;
+    // Poll Docker state every 750 ms during the action
+    const pollInterval = setInterval(async () => {
+      if (isActionDone) return;
+      try {
+        const res = await apiFetch("/api/docker/state");
+        const data = await res.json();
+        if (data.success && !isActionDone) {
+          const updated = data.containers || [];
+          
+          // PARTIAL UPDATE: Patch only the affected container row in the containers list
+          const fresh = updated.find((x: any) => x.name === containerName);
+          if (fresh) {
+            setContainers(prev => prev.map(c => {
+              if (c.name === containerName) {
+                return fresh;
+              }
+              return c;
+            }));
+
+            const stableStateReached = 
+              (action === 'start' && fresh.status === 'running') ||
+              (action === 'stop' && (fresh.status === 'exited' || fresh.status === 'stopped')) ||
+              (action === 'restart' && fresh.status === 'running');
+            if (stableStateReached) {
+              isActionDone = true;
+              clearInterval(pollInterval);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Polling error:", e);
+      }
+    }, 750);
+
     try {
       const response = await apiFetch("/api/docker/control", {
         method: "POST",
@@ -687,8 +732,26 @@ export default function App() {
         body: JSON.stringify({ action, containerName })
       });
       const data = await response.json();
+      
+      isActionDone = true;
+      clearInterval(pollInterval);
+
       if (data.success) {
-        await fetchDockerState();
+        // Fetch latest state to perform the final patch
+        const res = await apiFetch("/api/docker/state");
+        const stateData = await res.json();
+        if (stateData.success) {
+          const fresh = stateData.containers.find((x: any) => x.name === containerName);
+          if (fresh) {
+            setContainers(prev => prev.map(c => {
+              if (c.name === containerName) {
+                return fresh;
+              }
+              return c;
+            }));
+          }
+        }
+
         if (activeTerminalContainer && activeTerminalContainer.name === containerName) {
           fetchTerminalLogs(containerName);
         }
@@ -696,6 +759,8 @@ export default function App() {
         setControlError(`Failed to complete ${action}: ${data.error || "Unknown server error"}`);
       }
     } catch (err: any) {
+      isActionDone = true;
+      clearInterval(pollInterval);
       console.error(err);
       setControlError(`Network error during control operation: ${err.message}`);
     } finally {
@@ -778,14 +843,21 @@ export default function App() {
     if (!isConnected) return;
     try {
       await apiFetch("/api/docker/tick", { method: "POST" });
+      
+      // Fetch latest Docker state and update dashboard directly (no invalidation/clearing)
       await fetchDockerState();
+
+      // Refresh AI Summary if a previous query is active
+      if (lastQuery) {
+        executeDiagnosticQuery(lastQuery, true);
+      }
     } catch (err) {
       console.error("Failed to fetch updated metrics:", err);
     }
   };
 
   // Run Ollama translation/diagnostic query
-  const executeDiagnosticQuery = async (queryText: string) => {
+  const executeDiagnosticQuery = async (queryText: string, silent = false) => {
     if (!isConnected || !queryText.trim()) return;
     setIsAgentRunning(true);
     setAgentError(null);
@@ -879,17 +951,26 @@ Rules:
 4. Do not wrap in markdown syntax or write text outside the JSON.`;
     }
 
-    // Artificial timing delays to elegantly simulate diagnostic workflows 
-    const steps = [
-      "Understanding request parameters...",
-      "Analyzing Docker socket status...",
-      "Inspecting live container health...",
-      "Generating strategic monitoring overview..."
-    ];
+    if (!silent) {
+      // Artificial timing delays to elegantly simulate diagnostic workflows 
+      const steps = [
+        "Understanding request parameters...",
+        "Analyzing Docker socket status...",
+        "Inspecting live container health...",
+        "Generating strategic monitoring overview..."
+      ];
 
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 550));
-      setAgentStepsCompleted((prev) => [...prev, steps[i]]);
+      for (let i = 0; i < steps.length; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 550));
+        setAgentStepsCompleted((prev) => [...prev, steps[i]]);
+      }
+    } else {
+      setAgentStepsCompleted([
+        "Understanding request parameters...",
+        "Analyzing Docker socket status...",
+        "Inspecting live container health...",
+        "Generating strategic monitoring overview..."
+      ]);
     }
 
     try {

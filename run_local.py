@@ -236,13 +236,26 @@ def main():
         print("Application cannot start automatically due to missing prerequisites.")
         sys.exit(1)
 
+    # Run application command
+    connector_proc = None
+    if framework == "node":
+        print("\n[INFO] Starting Local Connector in the background...")
+        try:
+            if os.name == 'nt':
+                connector_proc = subprocess.Popen("npm.cmd run connector", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                connector_proc = subprocess.Popen("npm run connector", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("    [OK] Local Connector started on http://127.0.0.1:43210")
+        except Exception as e:
+            print(f"    [WARNING] Failed to start local connector automatically: {e}")
+            print("              You may need to run 'npm run connector' manually in another terminal.")
+
     print("\nStarting application server...")
     time.sleep(1)
     
     # Open browser
     webbrowser.open("http://localhost:3000")
     
-    # Run application command
     if framework == "node":
         cmd = "npm run dev"
     else:
@@ -252,6 +265,19 @@ def main():
         subprocess.run(cmd, shell=True)
     except KeyboardInterrupt:
         print("\nShutting down local application server safely.")
+    finally:
+        if connector_proc:
+            print("[INFO] Shutting down Local Connector...")
+            if os.name == 'nt':
+                try:
+                    subprocess.run(f"taskkill /F /T /PID {connector_proc.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except:
+                    pass
+            else:
+                try:
+                    connector_proc.terminate()
+                except:
+                    pass
 
 if __name__ == "__main__":
     main()

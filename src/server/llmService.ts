@@ -211,21 +211,38 @@ export class LLMService {
   }
 
   /**
-   * Type 2: Generate Retrieval Summary (60 to 120 words)
+   * Type 2: Generate Retrieval Summary (Concise status report)
    */
-  static async generateRetrievalSummary(containers: any[]): Promise<string> {
-    const prompt = `Provide a detailed status report of the following containers:
+  static async generateRetrievalSummary(containers: any[], healthType = 'all'): Promise<string> {
+    let formatInstructions = "";
+    if (healthType === 'healthy') {
+      formatInstructions = `Format the report EXACTLY as follows for each container in the list:
+Container: [exact name]
+State: [status]
+Reason Healthy: [why it is healthy, e.g. state is running, no restart loop, normal CPU/Memory, no recent failures]
+Resource Snapshot: [exact CPU & Memory usage specs]
+Short Summary: [brief 1-sentence stability summary]`;
+    } else if (healthType === 'unhealthy') {
+      formatInstructions = `Format the report EXACTLY as follows for each container in the list:
+Container: [exact name]
+Issue: [exact issue, e.g. status is exited/stopped/restarting, resource pressure, or high restart count]
+Possible Cause: [why this happened based on state details]
+Suggested Investigation: [actionable next step, e.g. check logs or configs]
+Short Summary: [brief 1-sentence anomaly summary]`;
+    } else {
+      formatInstructions = `Provide a concise status report of the environment health based on the running and non-running containers.`;
+    }
+
+    const prompt = `State details for the following containers:
     ${JSON.stringify(containers, null, 2)}
 
+    ${formatInstructions}
+
     Follow these rules strictly:
-    1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
-    2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
-    3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
-    4. For each container in the list, state its exact name, current execution status (e.g. running, exited, or stopped), its exact image, its uptime or exit code description, CPU usage, and memory utilization.
-    5. Summarize the overall environment health based on the ratio of running to exited containers. Suggest next-step troubleshooting actions (like checking logs or restarting) if there are exited containers.
-    6. Do NOT mention health check, health status, or health metrics.
-    7. Do NOT repeat any phrases, words, or facts.
-    8. Do NOT use markdown tables, list formats, or section headers. Output plain text only.`;
+    1. Maximum target length: 80 words. Be extremely concise.
+    2. Reference ONLY the actual containers listed above. Do not invent or mention fake/placeholder containers.
+    3. Every response must contain complete thoughts and sentences ending with standard punctuation (. or ! or ?).
+    4. Do not use markdown tables, list formats, or section headers. Output plain text only.`;
 
     try {
       return await this.callOllama(prompt, false);
@@ -260,22 +277,38 @@ export class LLMService {
   }
 
   /**
-   * Type 4: Generate Reasoning Summary (60 to 120 words)
+   * Type 4: Generate Reasoning Summary (Concise diagnostics/reasoning)
    */
-  static async generateReasoningSummary(query: string, containers: any[]): Promise<string> {
-    const prompt = `Analyze the user query: "${query}"
-    Based on the following container states and metrics:
+  static async generateReasoningSummary(query: string, containers: any[], healthType = 'all'): Promise<string> {
+    let formatInstructions = "";
+    if (healthType === 'healthy') {
+      formatInstructions = `Format the diagnostics report EXACTLY as follows for each container in the list:
+Container: [exact name]
+State: [status]
+Reason Healthy: [why it is healthy, e.g. state is running, no restart loop, normal CPU/Memory, no recent failures]
+Resource Snapshot: [exact CPU & Memory usage specs]
+Short Summary: [brief 1-sentence stability summary]`;
+    } else if (healthType === 'unhealthy') {
+      formatInstructions = `Format the diagnostics report EXACTLY as follows for each container in the list:
+Container: [exact name]
+Issue: [exact issue, e.g. status is exited/stopped/restarting, resource pressure, or high restart count]
+Possible Cause: [why this happened based on state details]
+Suggested Investigation: [actionable next step, e.g. check logs or configs]
+Short Summary: [brief 1-sentence anomaly summary]`;
+    } else {
+      formatInstructions = `Conduct thorough reasoning and diagnosis to address the user's query: "${query}"`;
+    }
+
+    const prompt = `Analyze details for the following containers:
     ${JSON.stringify(containers, null, 2)}
 
+    ${formatInstructions}
+
     Follow these rules strictly:
-    1. Target response length: Write a response between 60 and 120 words. Plan your length before generation to fit naturally within this range.
-    2. Every response must contain complete thoughts and complete sentences. Finish naturally and end correctly with a standard punctuation mark (. or ! or ?).
-    3. Do NOT use ellipsis, trailing dots ("..."), unfinished lines, or partial sentences. No abrupt stopping.
-    4. Conduct thorough reasoning and diagnosis to address the user's query. Describe the status of each relevant container (name, status, CPU, and memory details).
-    5. Highlight any metric anomalies (like high CPU, memory pressure, or unexpected exited states), explain the potential root causes, and provide recommended troubleshooting steps or optimization actions.
-    6. Do NOT mention health check, health status, or health metrics.
-    7. Do not repeat words or sentences.
-    8. Do NOT use markdown tables, list formats, or section headers. Output plain text only.`;
+    1. Maximum target length: 80 words. Be extremely concise.
+    2. Reference ONLY the actual containers listed above. Do not invent or mention fake/placeholder containers.
+    3. Every response must contain complete thoughts and sentences ending with standard punctuation (. or ! or ?).
+    4. Do not use markdown tables, list formats, or section headers. Output plain text only.`;
 
     try {
       return await this.callOllama(prompt, false);
